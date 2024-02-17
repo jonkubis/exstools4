@@ -5,6 +5,7 @@ from dataclasses import dataclass, fields, field
 import exsparams
 
 
+
 def bool_to_byte(bools):
     return sum(1 << (7 - i) for i, bit in enumerate(bools) if bit)
 
@@ -13,6 +14,7 @@ def bool_to_byte(bools):
 class EXSInstrument():
     data:     str = None
     name:     str = None
+    pathname: str = None
     header:   str = None
     zones:   list = field(default_factory=lambda: [])
     groups:  list = field(default_factory=lambda: [])
@@ -81,10 +83,18 @@ def parse_zone(data,id=None):
     zone = EXSZone()
     zone.data = data
 
-    if len(zone.data) == 184:
+    if len(zone.data) == 180:
+        struct_format = "<8x4s64sBBbbbbBBxBBxIIIIIbBB42xBbbbxB5xII8x"
+    elif len(zone.data) == 184:
         struct_format = "<8x4s64sBBbbbbBBxBBxIIIIIbBB42xBbbbxB5xII8xI"
-    else:
+    elif len(zone.data) == 208:
+        struct_format = "<8x4s64sBBbbbbBBxBBxIIIIIbBB42xBbbbxB5xII8xIIiII8x"
+    elif len(zone.data) == 212:
+        struct_format = "<8x4s64sBBbbbbBBxBBxIIIIIbBB42xBbbbxB5xII8xIIiII8xf"
+    elif len(zone.data) == 224:
         struct_format = "<8x4s64sBBbbbbBBxBBxIIIIIbBB42xBbbbxB5xII8xIIiII8xfI"
+
+    #print (len(zone.data))
 
     struct_size   = struct.calcsize(struct_format)
     #print (struct_size)
@@ -122,13 +132,15 @@ def parse_zone(data,id=None):
     zone.output       = values[24]  # Zone: Output
     zone.group        = values[25]  # Group Assignment
     zone.sampleindex  = values[26]  #
-    zone.fadeout      = values[27]  # Fade Out
-    if len(zone.data) == 216:
+    if len(zone.data) >= 184:
+        zone.fadeout      = values[27]  # Fade Out
+    if len(zone.data) >= 208:
         zone.anchor       = values[28]  # Offset
         zone.tailsampleindex = values[29] # Audio File Tail
         zone.tailstart    = values[30]  # Audio File Tail: Start
         zone.tailend      = values[31]  # Audio File Tail: End
         zone.tailvolume   = values[32]  # Audio File Tail: Volume
+    if len(zone.data) >= 216:
         zone.fadein       = values[33]  # Fade In
 
     #zone options
@@ -280,11 +292,13 @@ class EXSGroup():
 def parse_group(data,id=None):
     group = EXSGroup()
     group.data = data
-    #print (len(group.data))
+    print (len(group.data))
 
-    if len(group.data) == 196:
+    if len(group.data) == 172:
+        struct_format = "<8x4s64sbbBBBBBb8xH14xBBBB2xBBxbxb12xiiiixBBB4xiBBBBBBBB2xbb"
+    elif len(group.data) == 196:
         struct_format = "<8x4s64sbbBBBBBb8xH14xBBBB2xBBxbxb12xiiiixBBB4xiBBBBBBBB2xbbiiiiii"
-    else:
+    elif len(group.data) == 208:
         struct_format = "<8x4s64sbbBBBBBb8xH14xBBBB2xBBxbxb12xiiiixBBB4xiBBBBBBBB2xbbiiiiii4xii"
     struct_size   = struct.calcsize(struct_format)
     #print (struct_size)
@@ -332,13 +346,14 @@ def parse_group(data,id=None):
     group.enablebyarticulation   = values[34]  # Enable by Articulation: Value
     group.enablebybenderlow      = values[35]  # Enable by Bend: Low
     group.enablebybenderhigh     = values[36]  # Enable by Bend: High
-    group.env1holdoffset         = values[37]  # Envelope 1 Offsets: H (amp env)
-    group.env2attackoffset       = values[38]  # Envelope 2 Offsets: A (env 2)
-    group.env2decayoffset        = values[39]  # Envelope 2 Offsets: D (env 2)
-    group.env2sustainoffset      = values[40]  # Envelope 2 Offsets: S (env 2)
-    group.env2releaseoffset      = values[41]  # Envelope 2 Offsets: R (env 2)
-    group.env2holdoffset         = values[42]  # Envelope 2 Offsets: H (env 2)
-    if len(group.data) == 208:
+    if len(group.data) >= 196:
+        group.env1holdoffset         = values[37]  # Envelope 1 Offsets: H (amp env)
+        group.env2attackoffset       = values[38]  # Envelope 2 Offsets: A (env 2)
+        group.env2decayoffset        = values[39]  # Envelope 2 Offsets: D (env 2)
+        group.env2sustainoffset      = values[40]  # Envelope 2 Offsets: S (env 2)
+        group.env2releaseoffset      = values[41]  # Envelope 2 Offsets: R (env 2)
+        group.env2holdoffset         = values[42]  # Envelope 2 Offsets: H (env 2)
+    if len(group.data) >= 208:
         group.env1delayoffset        = values[43]  # Envelope 2 Delay Offset (amp env)
         group.env2delayoffset        = values[44]  # Envelope 1 Delay Offset (env 2)
 
@@ -364,6 +379,71 @@ def parse_group(data,id=None):
     return group
 
 
+def export_group(group):
+    to_pack = [
+        b'\x00' * 8,
+        b'TBOS',
+        group.name.encode(),
+        group.volume,
+        group.pan,
+        group.polyphony,
+        bool_to_byte([
+            group.fixedsampleselect,
+            group.releasetriggerdecay,
+            {0: False, 32:  True}[group.options & 32], # pass through the other bits of the existing options
+            group.mute,
+            {0: False, 8:   True}[group.options & 8],
+            {0: False, 4:   True}[group.options & 4],
+            {0: False, 2:   True}[group.options & 2],
+            {0: False, 1:   True}[group.options & 1]
+        ]),
+        group.exclusive,
+        group.minvel,
+        group.maxvel,
+        group.sampleselectrandomoffset,
+        group.releasetriggertime,
+        group.velocityrangexfade+128,
+        group.velocityrangexfadetype,
+        group.keyrangexfadetype,
+        group.keyrangexfade+128,
+        group.enablebytempolow,
+        group.enablebytempohigh,
+        group.cutoffoffset,
+        group.resooffset,
+        group.env1attackoffset,
+        group.env1decayoffset,
+        group.env1sustainoffset,
+        group.env1releaseoffset,
+        {False:0,True:1}[group.releasetrigger],
+        group.output,
+        group.enablebynotevalue,
+        group.roundrobingrouppos,
+        group.enablebytype,
+        group.enablebycontrolvalue,
+        group.enablebycontrollow,
+        group.enablebycontrolhigh,
+        group.startnote,
+        group.endnote,
+        group.enablebymidichannel - 1,
+        group.enablebyarticulation,
+        group.enablebybenderlow,
+        group.enablebybenderhigh,
+        group.env1holdoffset,
+        group.env2attackoffset,
+        group.env2decayoffset,
+        group.env2sustainoffset,
+        group.env2releaseoffset,
+        group.env2holdoffset,
+        group.env1delayoffset,
+        group.env2delayoffset
+    ]
+    #struct_format ="<8x4s64sbbBBBBBb8xH14xBBBB2xBBxbxb12xiiiixBBB4xiBBBBBBBB2xbbiiiiii4xii"
+    struct_format = "<8s4s64sbbBBBBBb8xH14xBBBB2xBBxbxb12xiiiixBBB4xiBBBBBBBB2xbbiiiiii4xii"
+    b = struct.pack(struct_format, *to_pack)
+    return b
+
+
+
 @dataclass
 class EXSSample():
     data:               str = None
@@ -375,6 +455,12 @@ class EXSSample():
     bitdepth:           int = None
     channels:           int = 2
     fourdigitcode:      str = None  # default 'EVAW' = WAVE
+    # WAVE     = b'EVAW'
+    # AIFF     = b'FFIA'
+    # CAF AAC  = b'ffac'
+    # M4A AAC  = b' A4M'
+    # MP3      = b'3GPM'
+    # SD2      = b'f2dS'
     filesize:           int = 0
     iscompressed:       bool = False
     folder:             str = None
@@ -391,7 +477,7 @@ def parse_sample(data,id=None):
     sample = EXSSample()
     sample.data = data
 
-    if len(sample.data) == 668:
+    if len(sample.data) == 676:
         struct_format = "<8x4s64sIIIIII4x4sII40x256s256s"
     else:
         struct_format = "<8x4s64sIIIIII4x4sII40x256s"
@@ -418,7 +504,7 @@ def parse_sample(data,id=None):
     sample.filesize         = values[9]   # size (in bytes) of the actual sample file, probably used for relinking
     sample.iscompressed     = values[10]==1
     sample.folder           = values[11]
-    if len(sample.data) == 668:
+    if len(sample.data) == 676:
         values[12] = values[12].split(b'\x00', maxsplit=1)[0].decode()
         sample.filename         = values[12]
 
@@ -428,6 +514,35 @@ def parse_sample(data,id=None):
     #     print(f"{field_name}: {field_value}")
 
     return sample
+
+
+def export_sample(sample):
+    to_pack = [
+        b'\x00' * 8,
+        b'TBOS',
+        sample.name.encode(),
+        sample.wavedatastart,
+        sample.length,
+        sample.rate,
+        sample.bitdepth,
+        sample.channels,
+        sample.channels, #yep! again
+        sample.fourdigitcode,
+        sample.filesize,
+        {False: 0, True: 1}[sample.iscompressed],
+        {False: b'\x00\x00\x00\x00', True: b'PMOC'}[sample.iscompressed],
+        16, #not sure, but always 16! even at 24 bit
+        sample.folder.encode(),
+    ]
+
+    struct_format = "<8s4s64sIIIIII4x4sII4sI32x256s"
+
+    if sample.filename is not None:
+        struct_format += '256s8x'
+        to_pack.append(sample.filename.encode())
+
+    b = struct.pack(struct_format, *to_pack)
+    return b
 
 
 def parse_params(data):
@@ -469,3 +584,59 @@ def parse_params(data):
     #         keyname = hex(k)
 
     return params
+
+
+def export_params(params):
+    to_pack = [
+        b'\x00' * 8,
+        b'TBOS',
+        b"Default Param",
+        100, #old school param count
+    ]
+
+    old_school_param_keys, old_school_param_values = [], []
+    new_school_param_keys, new_school_param_values = [], []
+    for k, v in params.items():
+        if k not in exsparams.parameter_order:
+            print (f"Parameter #{k} found in instrument but not in my master parameter order list! Aborting!")
+            quit()
+
+    for k in exsparams.parameter_order:
+        #get the value for this parameter
+        if k in params: # if it exists in our patch
+            v = params[k]
+        elif k in exsparams.default_params: # if it's a default we haven't included
+            v = exsparams.default_params[k]
+        else: # if neither, skip it
+            continue
+
+        if k not in exsparams.mandatory_parameter_ids and v == 0: continue  # skip optional parameters that == 0
+
+        if k < 255 and len(old_school_param_keys) < 100: # old school parameters
+            old_school_param_keys.append(k)
+            old_school_param_values.append(v)
+        else: # new school parameters (keys > 255 and overflow when old-school parameters are greater than 100 in count)
+            new_school_param_keys.append(k)
+            new_school_param_values.append(v)
+
+    while len(old_school_param_keys) < 100:
+        old_school_param_keys.append(0)
+        old_school_param_values.append(0)
+
+    while len(new_school_param_keys) < 200:
+        new_school_param_keys.append(0)
+        new_school_param_values.append(0)
+
+    struct_format = "<8s4s64sI100B100hI400h"
+    struct_size = struct.calcsize(struct_format)
+    print (f'\n{struct_size}')
+
+    to_pack.extend(old_school_param_keys)
+    to_pack.extend(old_school_param_values)
+    to_pack.append(200) # number of 'new-school' params & values
+    to_pack.extend([val for pair in zip(new_school_param_keys, new_school_param_values) for val in pair])
+
+    #to_pack.extend([*zip(new_school_param_keys,new_school_param_values)])
+
+    b = struct.pack(struct_format, *to_pack)
+    return b
