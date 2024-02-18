@@ -1,4 +1,10 @@
-# started 2/12/2024
+# ███████╗██╗  ██╗███████╗███████╗██╗██╗     ███████╗   ██████╗ ██╗   ██╗
+# ██╔════╝╚██╗██╔╝██╔════╝██╔════╝██║██║     ██╔════╝   ██╔══██╗╚██╗ ██╔╝
+# █████╗   ╚███╔╝ ███████╗█████╗  ██║██║     █████╗     ██████╔╝ ╚████╔╝
+# ██╔══╝   ██╔██╗ ╚════██║██╔══╝  ██║██║     ██╔══╝     ██╔═══╝   ╚██╔╝
+# ███████╗██╔╝ ██╗███████║██║     ██║███████╗███████╗██╗██║        ██║
+# ╚══════╝╚═╝  ╚═╝╚══════╝╚═╝     ╚═╝╚══════╝╚══════╝╚═╝╚═╝        ╚═╝
+
 
 import exsclasses
 import struct
@@ -36,15 +42,15 @@ def read_exsfile(pathname):
             zone_ctr += 1
             zone = exsclasses.parse_zone(chunk_data,id=zone_ctr)
             instrument.zones.append(zone)
-        elif chunk_signature == b'\x01\x01\x00\x02': # group
+        elif chunk_signature == b'\x01\x01\x00\x02' or chunk_signature == b'\x01\x01\x00\x42': # group
             group_ctr += 1
             group = exsclasses.parse_group(chunk_data,id=group_ctr)
             instrument.groups.append(group)
-        elif chunk_signature == b'\x01\x01\x00\x03': # sample
+        elif chunk_signature == b'\x01\x01\x00\x03' or chunk_signature == b'\x01\x01\x00\x43': # sample
             sample_ctr += 1
             sample = exsclasses.parse_sample(chunk_data, id=sample_ctr)
             instrument.samples.append(sample)
-        elif chunk_signature == b'\x01\x01\x00\x04': # params
+        elif chunk_signature == b'\x01\x01\x00\x04' or chunk_signature == b'\x01\x01\x00\x44': # params
             instrument.param_data = chunk_data
             instrument.params = exsclasses.parse_params(chunk_data)
         else:
@@ -107,7 +113,9 @@ def write_exsfile(instrument,outfile,original_zone_data=False,original_group_dat
 
 
 if __name__ == '__main__':
-    inst = read_exsfile("/Users/jonkubis/Music/ONE SHOTS/VENGEANCE/Snares/VEC2 Snares 2/VEC2 Snares 1.exs")
+    #inst = read_exsfile("/Users/jonkubis/Desktop/EXS STUFF/JK Finger Bass.exs") # already sample merged with CAF
+    inst = read_exsfile("/Users/jonkubis/Music/Audio Music Apps/Sampler Instruments/00 Organized/Bass/JK Finger Bass.exs") # not sample merged
+    #inst = read_exsfile("/Library/Application Support/Logic/Sampler Instruments/03 Drums & Percussion/04 Drum Kit Designer/Drum Kit Designer/Stereo/Sunset Kit.exs")
     samplesearch.resolve_sample_locations(inst)
 
 
@@ -136,12 +144,11 @@ if __name__ == '__main__':
     for k, v in inst.params.items():
         keyname = ""
         if k in id_to_param: keyname = id_to_param[k] + " "
-        print(f"{keyname}{hex(k)} ({k}) = {v}")
+        #print(f"{keyname}{hex(k)} ({k}) = {v}")
         parameter_order.append(k)
 
-    print (inst.params)
-
-    print (parameter_order)
+    # print (inst.params)
+    # print (parameter_order)
 
     # print ('\n')
     #

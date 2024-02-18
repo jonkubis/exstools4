@@ -1,10 +1,14 @@
-# started 2/12/2024
+# ███████╗██╗  ██╗███████╗ ██████╗██╗      █████╗ ███████╗███████╗███████╗███████╗   ██████╗ ██╗   ██╗
+# ██╔════╝╚██╗██╔╝██╔════╝██╔════╝██║     ██╔══██╗██╔════╝██╔════╝██╔════╝██╔════╝   ██╔══██╗╚██╗ ██╔╝
+# █████╗   ╚███╔╝ ███████╗██║     ██║     ███████║███████╗███████╗█████╗  ███████╗   ██████╔╝ ╚████╔╝
+# ██╔══╝   ██╔██╗ ╚════██║██║     ██║     ██╔══██║╚════██║╚════██║██╔══╝  ╚════██║   ██╔═══╝   ╚██╔╝
+# ███████╗██╔╝ ██╗███████║╚██████╗███████╗██║  ██║███████║███████║███████╗███████║██╗██║        ██║
+# ╚══════╝╚═╝  ╚═╝╚══════╝ ╚═════╝╚══════╝╚═╝  ╚═╝╚══════╝╚══════╝╚══════╝╚══════╝╚═╝╚═╝        ╚═╝
+
 
 import struct
 from dataclasses import dataclass, fields, field
 import exsparams
-
-
 
 def bool_to_byte(bools):
     return sum(1 << (7 - i) for i, bit in enumerate(bools) if bit)
@@ -87,6 +91,8 @@ def parse_zone(data,id=None):
         struct_format = "<8x4s64sBBbbbbBBxBBxIIIIIbBB42xBbbbxB5xII8x"
     elif len(zone.data) == 184:
         struct_format = "<8x4s64sBBbbbbBBxBBxIIIIIbBB42xBbbbxB5xII8xI"
+    elif len(zone.data) == 204:
+        struct_format = "<8x4s64sBBbbbbBBxBBxIIIIIbBB42xBbbbxB5xII8xIIiII4x"
     elif len(zone.data) == 208:
         struct_format = "<8x4s64sBBbbbbBBxBBxIIIIIbBB42xBbbbxB5xII8xIIiII8x"
     elif len(zone.data) == 212:
@@ -134,11 +140,12 @@ def parse_zone(data,id=None):
     zone.sampleindex  = values[26]  #
     if len(zone.data) >= 184:
         zone.fadeout      = values[27]  # Fade Out
-    if len(zone.data) >= 208:
+    if len(zone.data) >= 204:
         zone.anchor       = values[28]  # Offset
         zone.tailsampleindex = values[29] # Audio File Tail
         zone.tailstart    = values[30]  # Audio File Tail: Start
         zone.tailend      = values[31]  # Audio File Tail: End
+    if len(zone.data) >= 212:
         zone.tailvolume   = values[32]  # Audio File Tail: Volume
     if len(zone.data) >= 216:
         zone.fadein       = values[33]  # Fade In
@@ -292,14 +299,19 @@ class EXSGroup():
 def parse_group(data,id=None):
     group = EXSGroup()
     group.data = data
-    print (len(group.data))
+    #print ("len(group.data)",len(group.data))
 
-    if len(group.data) == 172:
+    if len(group.data) == 168:
+        struct_format = "<8x4s64sbbBBBBBb8xH14xBBBB2xBBxbxb12xiiiixBBB4xiBBBBBBBB"
+    elif len(group.data) == 172:
         struct_format = "<8x4s64sbbBBBBBb8xH14xBBBB2xBBxbxb12xiiiixBBB4xiBBBBBBBB2xbb"
     elif len(group.data) == 196:
         struct_format = "<8x4s64sbbBBBBBb8xH14xBBBB2xBBxbxb12xiiiixBBB4xiBBBBBBBB2xbbiiiiii"
-    elif len(group.data) == 208:
+    elif len(group.data) == 200:
+        struct_format = "<8x4s64sbbBBBBBb8xH14xBBBB2xBBxbxb12xiiiixBBB4xiBBBBBBBB2xbbiiiiii4x"
+    elif len(group.data) >= 208:
         struct_format = "<8x4s64sbbBBBBBb8xH14xBBBB2xBBxbxb12xiiiixBBB4xiBBBBBBBB2xbbiiiiii4xii"
+
     struct_size   = struct.calcsize(struct_format)
     #print (struct_size)
 
@@ -344,8 +356,9 @@ def parse_group(data,id=None):
     group.endnote                = values[32]  # Key Range: High
     group.enablebymidichannel    = values[33]+1  # Enable By Channel: Value (originally zero-based)
     group.enablebyarticulation   = values[34]  # Enable by Articulation: Value
-    group.enablebybenderlow      = values[35]  # Enable by Bend: Low
-    group.enablebybenderhigh     = values[36]  # Enable by Bend: High
+    if len(group.data) >= 188:
+        group.enablebybenderlow      = values[35]  # Enable by Bend: Low
+        group.enablebybenderhigh     = values[36]  # Enable by Bend: High
     if len(group.data) >= 196:
         group.env1holdoffset         = values[37]  # Envelope 1 Offsets: H (amp env)
         group.env2attackoffset       = values[38]  # Envelope 2 Offsets: A (env 2)
@@ -471,15 +484,20 @@ class EXSSample():
     # newsamplefileindex: int = 0  # for merging
     # israwaudio: bool = False  # SFZ import uses this
     # embeddedsample: bool = False
+    merge_pitch_adjust: float = 0.0
+    merge_monolith_index: int = 0
+    merge_monolith_sample_start: int = 0
+    merge_monolith_sample_end:   int = 0
 
 
 def parse_sample(data,id=None):
     sample = EXSSample()
     sample.data = data
+    #print (len(sample.data))
 
-    if len(sample.data) == 676:
+    if len(sample.data) in (668,676):
         struct_format = "<8x4s64sIIIIII4x4sII40x256s256s"
-    else:
+    elif len(sample.data) == 412:
         struct_format = "<8x4s64sIIIIII4x4sII40x256s"
     struct_size   = struct.calcsize(struct_format)
     #print (f'\n{struct_size}')
@@ -504,7 +522,7 @@ def parse_sample(data,id=None):
     sample.filesize         = values[9]   # size (in bytes) of the actual sample file, probably used for relinking
     sample.iscompressed     = values[10]==1
     sample.folder           = values[11]
-    if len(sample.data) == 676:
+    if len(sample.data) >= 668:
         values[12] = values[12].split(b'\x00', maxsplit=1)[0].decode()
         sample.filename         = values[12]
 
@@ -596,10 +614,13 @@ def export_params(params):
 
     old_school_param_keys, old_school_param_values = [], []
     new_school_param_keys, new_school_param_values = [], []
-    for k, v in params.items():
-        if k not in exsparams.parameter_order:
-            print (f"Parameter #{k} found in instrument but not in my master parameter order list! Aborting!")
-            quit()
+
+    # print (params.keys())
+
+    #for k, v in params.items():
+        #if k not in exsparams.parameter_order:
+        #    print (f"Parameter #{k} found in instrument but not in my master parameter order list! Aborting!")
+        #    quit()
 
     for k in exsparams.parameter_order:
         #get the value for this parameter
@@ -629,7 +650,7 @@ def export_params(params):
 
     struct_format = "<8s4s64sI100B100hI400h"
     struct_size = struct.calcsize(struct_format)
-    print (f'\n{struct_size}')
+    #print (f'\n{struct_size}')
 
     to_pack.extend(old_school_param_keys)
     to_pack.extend(old_school_param_values)
