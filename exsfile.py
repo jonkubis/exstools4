@@ -49,6 +49,7 @@ def read_exsfile(pathname):
         elif chunk_signature == b'\x01\x01\x00\x03' or chunk_signature == b'\x01\x01\x00\x43': # sample
             sample_ctr += 1
             sample = exsclasses.parse_sample(chunk_data, id=sample_ctr)
+            sample.exsfile_pos = offset
             instrument.samples.append(sample)
         elif chunk_signature == b'\x01\x01\x00\x04' or chunk_signature == b'\x01\x01\x00\x44': # params
             instrument.param_data = chunk_data
@@ -60,7 +61,7 @@ def read_exsfile(pathname):
 
     return instrument
 
-def write_exsfile(instrument,outfile,original_zone_data=False,original_group_data=False,original_sample_data=False,original_param_data=False):
+def write_exsfile(instrument,outfile,original_zone_data=False,original_group_data=False,original_sample_data=False,original_param_data=False,relink_only=True):
     with open(outfile,'wb') as exsout:
         exsout.write(b'\x01\x01\x00\x00\x58\x00\x00\x00\x00\x00\x00\x00')  # instrument chunk header
         exsout.write(b'\x40\x00\x00\x00TBOS')  # subheader
@@ -77,7 +78,6 @@ def write_exsfile(instrument,outfile,original_zone_data=False,original_group_dat
 
                 exsout.write(struct.pack('<I', len(data) - 76))
                 exsout.write(data)
-
 
         if len(instrument.groups) > 0:
             for g in instrument.groups:
@@ -110,13 +110,34 @@ def write_exsfile(instrument,outfile,original_zone_data=False,original_group_dat
         exsout.write(struct.pack('<I', len(data) - 76))
         exsout.write(data)
 
+    print (f'Wrote: {outfile}')
+
+def relink_samples(pathname):
+    inst = read_exsfile(pathname)
+    found_all_samples = samplesearch.resolve_sample_locations(inst)
+    if found_all_samples:
+        with open(pathname, 'r+b') as infile:
+            for s in inst.samples:
+                infile.seek(s.exsfile_pos+164,os.SEEK_SET)
+                to_write = struct.pack('256s',s.folder.encode())
+                infile.write(to_write)
+        print (f"Relinked {len(inst.samples)} samples!")
+    else:
+        print ("Could not find all samples. Aborting!")
 
 
 if __name__ == '__main__':
+    import glob
+
+    # for pathname in glob.glob("/Users/jonkubis/Desktop/EXS STUFF/Mo'Phatt/*.exs"):
+    #     print(pathname)
+    #     relink_samples(pathname)
+    # quit()
+
     #inst = read_exsfile("/Users/jonkubis/Desktop/EXS STUFF/JK Finger Bass.exs") # already sample merged with CAF
-    inst = read_exsfile("/Users/jonkubis/Music/Audio Music Apps/Sampler Instruments/00 Organized/Bass/JK Finger Bass.exs") # not sample merged
+    inst = read_exsfile("/Users/jonkubis/Desktop/EXSOUT/EW/Bass Tripper Master.exs") # not sample merged
     #inst = read_exsfile("/Library/Application Support/Logic/Sampler Instruments/03 Drums & Percussion/04 Drum Kit Designer/Drum Kit Designer/Stereo/Sunset Kit.exs")
-    samplesearch.resolve_sample_locations(inst)
+    #samplesearch.resolve_sample_locations(inst)
 
 
     #inst = read_exsfile('/Users/jonkubis/Desktop/sampler_default.exs')

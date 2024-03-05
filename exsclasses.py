@@ -52,6 +52,7 @@ class EXSZone():
     maxvel:         int = 127
     samplestart:    int = 0
     sampleend:      int = None
+    loopoptions:    int = 0 #default
     loopstart:      int = 0
     loopend:        int = None
     loopcrossfade:  int = 0
@@ -64,7 +65,7 @@ class EXSZone():
     oneshot:        bool = False
     pitchtracking:  bool = True
     reverse:        bool = False
-    velrangeenable: bool = False
+    velrangeenable: bool = True
     mute:           bool = False
 
     flexoptions:    int = 0
@@ -88,19 +89,17 @@ def parse_zone(data,id=None):
     zone.data = data
 
     if len(zone.data) == 180:
-        struct_format = "<8x4s64sBBbbbbBBxBBxIIIIIbBB42xBbbbxB5xII8x"
+        struct_format = "<8x4s64sBBbbbbBBxBBxIIIIIbBB42xBbbbxB5xiI8x"
     elif len(zone.data) == 184:
-        struct_format = "<8x4s64sBBbbbbBBxBBxIIIIIbBB42xBbbbxB5xII8xI"
+        struct_format = "<8x4s64sBBbbbbBBxBBxIIIIIbBB42xBbbbxB5xiI8xI"
     elif len(zone.data) == 204:
-        struct_format = "<8x4s64sBBbbbbBBxBBxIIIIIbBB42xBbbbxB5xII8xIIiII4x"
+        struct_format = "<8x4s64sBBbbbbBBxBBxIIIIIbBB42xBbbbxB5xiI8xIIiII4x"
     elif len(zone.data) == 208:
-        struct_format = "<8x4s64sBBbbbbBBxBBxIIIIIbBB42xBbbbxB5xII8xIIiII8x"
+        struct_format = "<8x4s64sBBbbbbBBxBBxIIIIIbBB42xBbbbxB5xiI8xIIiII8x"
     elif len(zone.data) == 212:
-        struct_format = "<8x4s64sBBbbbbBBxBBxIIIIIbBB42xBbbbxB5xII8xIIiII8xf"
-    elif len(zone.data) == 224:
-        struct_format = "<8x4s64sBBbbbbBBxBBxIIIIIbBB42xBbbbxB5xII8xIIiII8xfI"
-
-    #print (len(zone.data))
+        struct_format = "<8x4s64sBBbbbbBBxBBxIIIIIbBB42xBbbbxB5xiI8xIIiII8xf"
+    elif len(zone.data) == 216 or len(zone.data) == 224:
+        struct_format = "<8x4s64sBBbbbbBBxBBxIIIIIbBB42xBbbbxB5xiI8xIIiII8xfI"
 
     struct_size   = struct.calcsize(struct_format)
     #print (struct_size)
@@ -228,8 +227,9 @@ def export_zone(zone):
         zone.tailvolume,
         zone.fadein
     ]
+
     #old_struct_format = "<8s4s64sBBbbbbBBxBBxIIIIIbBB42xBbbbxB5xII8xI"
-    struct_format = "<8s4s64sBBbbbbBBxBBxIIIIIbBB42xBbbbxB5xII8xIIiII8xfI"
+    struct_format = "<8s4s64sBBbbbbBBxBBxIIIIIbBB42xBbbbxB5xiI8xIIiII8xfI"
 
     b = struct.pack(struct_format,*to_pack)
     return b
@@ -257,7 +257,7 @@ class EXSGroup():
     keyrangexfadetype:      int = 0
     keyrangexfade:          int = 0
     enablebytempolow:       int = 80
-    enabletempohigh:        int = 140
+    enablebytempohigh:      int = 140
     cutoffoffset:           int = 0
     resooffset:             int = 0
     env1attackoffset:       int = 0
@@ -274,7 +274,7 @@ class EXSGroup():
     enablebycontrolhigh:    int = 0
     startnote:              int = 0
     endnote:                int = 127
-    enablebymidichannel:    int = 0
+    enablebymidichannel:    int = 1
     enablebyarticulation:   int = 1
     enablebybenderlow:      int = 0
     enablebybenderhigh:     int = 127
@@ -384,6 +384,8 @@ def parse_group(data,id=None):
     group.enableby_articulation = group.enablebytype == 6
     group.enableby_tempo        = group.enablebytype == 7
 
+    #print (group)
+
     # for field in fields(group):
     #     field_name = field.name
     #     field_value = getattr(group, field_name)
@@ -452,6 +454,7 @@ def export_group(group):
     ]
     #struct_format ="<8x4s64sbbBBBBBb8xH14xBBBB2xBBxbxb12xiiiixBBB4xiBBBBBBBB2xbbiiiiii4xii"
     struct_format = "<8s4s64sbbBBBBBb8xH14xBBBB2xBBxbxb12xiiiixBBB4xiBBBBBBBB2xbbiiiiii4xii"
+
     b = struct.pack(struct_format, *to_pack)
     return b
 
@@ -484,6 +487,7 @@ class EXSSample():
     # newsamplefileindex: int = 0  # for merging
     # israwaudio: bool = False  # SFZ import uses this
     # embeddedsample: bool = False
+    exsfile_pos: int = None  # used for in-place sample relinking
     merge_pitch_adjust: float = 0.0
     merge_monolith_index: int = 0
     merge_monolith_sample_start: int = 0

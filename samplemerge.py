@@ -11,13 +11,14 @@ import datetime
 import numpy as np
 from pydub import AudioSegment
 import soundfile
+from tqdm import tqdm
 
 from exsclasses import EXSSample
 from exsfile import read_exsfile, write_exsfile
 from samplesearch import resolve_sample_locations
 
 
-def samplemerge(instrument, output_path):
+def samplemerge(instrument, output_path, prefix=None, original_group_data=True, original_param_data=True):
     # first, verify all samples are present and accounted for
     for s in instrument.samples:
         pathname = os.path.join(s.folder, s.filename)
@@ -30,7 +31,7 @@ def samplemerge(instrument, output_path):
     # if all the sample files are the same rate, killer. but if not--
     # find the most common sample rate that they all can coexist at and adjust the playback pitches accordingly
     # e.g. a 22050hz file will need its playback speed adjusted down an octave if concatenated with a 44100hz file
-    prevailing_sample_rate, sample_rates, all_samples_are_same_rate = find_prevailing_sample_rate(inst)
+    prevailing_sample_rate, sample_rates, all_samples_are_same_rate = find_prevailing_sample_rate(instrument)
 
     for s in instrument.samples:
         s.merge_pitch_adjust = sr_pitch_offset(s.rate, prevailing_sample_rate)
@@ -38,7 +39,8 @@ def samplemerge(instrument, output_path):
 
     # next write out our monoliths.
     # let's generate some names
-    monolith_filenames = get_monolith_filenames(instrument.name)
+    if instrument.pathname is None: instrument.pathname = instrument.name + ".exs"
+    monolith_filenames = get_monolith_filenames(os.path.splitext(os.path.basename(instrument.pathname))[0])
     monolith_lengths = {}
     monoliths_as_samples = []
 
@@ -51,7 +53,12 @@ def samplemerge(instrument, output_path):
 
     one_sample_silence = np.zeros((1, channel_count), dtype=np.int16)
 
+    pbar = tqdm(total=len(instrument.samples))
+
     for sample_ctr, s in enumerate(instrument.samples):
+        pbar.set_description(s.filename)
+        pbar.update(1)
+
         if create_new_monolith:
             create_new_monolith = False
             monolith_index += 1
@@ -73,7 +80,7 @@ def samplemerge(instrument, output_path):
         s.merge_monolith_sample_end = outfile.tell() - 1 # note where this sample end in the monolith
         outfile.write(one_sample_silence) # stuff a sample of silence in between
 
-        if (outfile.tell() > 200_000_000):  # 200 million samples -- getting big! best to start a new monolith
+        if (outfile.tell() > 200_000_000):  # 200 million samples long -- getting big! best to start a new monolith
             monolith_lengths[monolith_filenames[monolith_index]] = outfile.tell()
             outfile.close()
             print(os.path.basename(wav_pathname) + "->" + os.path.basename(caf_pathname))
@@ -82,8 +89,8 @@ def samplemerge(instrument, output_path):
 
             caf_sample = EXSSample()
             caf_sample.name = os.path.basename(caf_pathname)
-            caf_sample.filename = caf_pathname
-            caf_sample.folder = output_path
+            caf_sample.filename = os.path.basename(caf_pathname)
+            caf_sample.folder = ""#output_path
             caf_sample.rate = prevailing_sample_rate
             caf_sample.channels = channel_count
             caf_sample.iscompressed = True
@@ -99,14 +106,16 @@ def samplemerge(instrument, output_path):
 
     monolith_lengths[monolith_filenames[monolith_index]] = outfile.tell()
     outfile.close()
+    pbar.close()
+
     print(os.path.basename(wav_pathname) + "->" + os.path.basename(caf_pathname))
     AudioSegment.from_file(wav_pathname).export(caf_pathname, format='caf', codec='alac')
     os.remove(wav_pathname)
 
     caf_sample = EXSSample()
     caf_sample.name = os.path.basename(caf_pathname)
-    caf_sample.filename = caf_pathname
-    caf_sample.folder = output_path
+    caf_sample.filename = os.path.basename(caf_pathname)
+    caf_sample.folder = ""#output_path
     caf_sample.rate = prevailing_sample_rate
     caf_sample.channels = channel_count
     caf_sample.iscompressed = True
@@ -140,9 +149,21 @@ def samplemerge(instrument, output_path):
         z.finetune = zonetunecents
         #print(" new coarse", z.coarsetune, "fine", z.finetune)
 
-    exs_out_name = instrument.name
+    #exs_out_name = instrument.name.replace("/","-")
+    exs_out_name = os.path.basename(instrument.pathname).replace("/","-")
+
+    if prefix is not None:
+        exs_out_name = prefix + " " + exs_out_name
     if not exs_out_name.endswith(".exs"): exs_out_name += ".exs"
-    write_exsfile(instrument,os.path.join(output_path,exs_out_name),original_group_data=True,original_param_data=True)
+
+    print (os.path.join(output_path,exs_out_name))
+
+    write_exsfile(
+        instrument,
+        os.path.join(output_path,exs_out_name),
+        original_group_data=original_group_data,
+        original_param_data=original_param_data
+    )
 
 
 def get_monolith_filenames(instrument_name):
@@ -194,7 +215,25 @@ def sr_pitch_offset(recording_sr,target_sr=44100):
 
 
 if __name__ == '__main__':
+    import glob
+
+    for pathname in glob.glob("/Users/jonkubis/Desktop/OUT_TEST/**/*.exs",recursive=True):
+        basename = os.path.basename(pathname)
+        parent_dir = os.path.split(os.path.split(pathname)[0])[1]
+        pre = "S900 SL5002 EP" # + parent_dir
+
+
+
+
+    #for pathname in glob.glob("/Volumes/Drobo 5N Backup/__SAHARA EXS/*.exs"):
+        inst = read_exsfile(pathname)
+        resolve_sample_locations(inst,match_filesize=True)#,search_path="/Users/jonkubis/Desktop/EXS STUFF/Ensoniq_MR_EXS/SoundFont Samples/Ensoniq MR Bank 3.Samples")
+        samplemerge(inst, output_path='/Users/jonkubis/Desktop/EXSOUT/S900', prefix=pre)#, prefix='PM_REFRAK')
+
+    #quit()
+
+
     #inst = read_exsfile("/Users/jonkubis/Music/Audio Music Apps/Sampler Instruments/00 Organized/Bass/JK Finger Bass.exs")
-    inst = read_exsfile("/Users/jonkubis/Downloads/EXSOUT2/NIK4FL/Band/6 - Bass/NIK4FL Upright Bass.exs")
-    resolve_sample_locations(inst)
-    samplemerge(inst,'/Users/jonkubis/Desktop/EXSOUT')
+    #inst = read_exsfile("/Users/jonkubis/Downloads/EXSOUT2/NIK4FL/Band/6 - Bass/NIK4FL Upright Bass.exs")
+    #resolve_sample_locations(inst)
+    #samplemerge(inst,'/Users/jonkubis/Desktop/EXSOUT')
