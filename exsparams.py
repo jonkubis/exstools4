@@ -214,6 +214,39 @@ PARAM_MOD11_SRC_INVERT          = 0x1a0
 PARAM_MOD11_VIA_INVERT          = 0x1a1
 PARAM_MOD11_BYPASS              = 0x1a2
 
+# ─────────────────────────────────────────────────────────────────────────────
+# UNDOCUMENTED PARAMETERS  (TODO #2: identify each via the param-watcher)
+# These IDs appear in factory .exs files but are not yet matched to a Sampler UI
+# control. They are added here so a non-pass-through export preserves them rather
+# than silently dropping them. The comment on each is the value pattern observed
+# across the factory library -- a clue for identification, not a confirmed name.
+# When one is identified, rename its PARAM_UNKNOWN_* constant, drop it from
+# undocumented_parameter_ids, and (if appropriate) add a default in default_params.
+# ─────────────────────────────────────────────────────────────────────────────
+PARAM_UNKNOWN_0x01 = 0x01   # varied values
+PARAM_UNKNOWN_0x16 = 0x16   # usually 0 (sits near GLIDE 0x14)
+PARAM_UNKNOWN_0x18 = 0x18   # constant 48
+PARAM_UNKNOWN_0x19 = 0x19   # constant 2
+PARAM_UNKNOWN_0x31 = 0x31   # constant 1 (default-on toggle?)
+PARAM_UNKNOWN_0x36 = 0x36   # level-like: 100/50/70
+PARAM_UNKNOWN_0x37 = 0x37   # level-like: 48/10/50
+PARAM_UNKNOWN_0x3a = 0x3a   # usually 0
+PARAM_UNKNOWN_0x3b = 0x3b   # usually 0
+PARAM_UNKNOWN_0x56 = 0x56   # time/rate-like: 420/500
+PARAM_UNKNOWN_0x5d = 0x5d   # usually 0 (pairs with 0x5e)
+PARAM_UNKNOWN_0x5e = 0x5e   # usually 0 (pairs with 0x5d)
+
+# Handle for the identification pass; iterate this to report/relabel them.
+undocumented_parameter_ids = [
+    PARAM_UNKNOWN_0x01, PARAM_UNKNOWN_0x16, PARAM_UNKNOWN_0x18, PARAM_UNKNOWN_0x19,
+    PARAM_UNKNOWN_0x31, PARAM_UNKNOWN_0x36, PARAM_UNKNOWN_0x37, PARAM_UNKNOWN_0x3a,
+    PARAM_UNKNOWN_0x3b, PARAM_UNKNOWN_0x56, PARAM_UNKNOWN_0x5d, PARAM_UNKNOWN_0x5e,
+]
+
+# Preserve them on export. Appended last so the well-known params claim the 100
+# old-style slots first (real files write at most ~90, so there is headroom).
+parameter_order += undocumented_parameter_ids
+
 MS_LUT = [0,0.003,0.009,0.024,0.049,0.092,0.157,0.252,0.384,0.562,0.797,1.097,1.476,1.946,2.519,3.21,4.035,5.009,6.15,7.475,9.004,10.757,12.753,15.015,17.566,20.428,23.627,27.187,31.136,35.5,40.307,45.586,51.368,57.684,64.564,72.043,80.152,88.929,98.406,108.62,119.61,131.41,144.07,157.62,172.11,187.57,204.05,221.59,240.25,260.05,281.05,303.31,326.85,351.75,378.03,405.77,435,465.79,498.18,532.23,568,605.54,644.91,686.18,729.39,774.61,821.9,871.32,922.94,976.82,1033,1091.6,1152.6,1216.2,1282.4,1351.2,1422.8,1497.2,1574.5,1654.7,1737.9,1824.3,1913.8,2006.5,2102.7,2202.2,2305.2,2411.8,2522,2636,2753.8,2875.5,3001.2,3130.9,3264.9,3403,3545.5,3692.5,3844,4000,4160.8,4326.4,4496.9,4672.4,4852.9,5038.7,5229.7,5426.1,5628,5835.4,6048.6,6267.5,6492.3,6723.2,6960.1,7203.2,7452.6,7708.5,7970.9,8239.9,8515.7,8798.4,9088,9384.8,9688.7,10000]
 
 def ms_to_index(list, K):

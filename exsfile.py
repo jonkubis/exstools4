@@ -7,6 +7,7 @@
 
 
 import exsclasses
+import exsblock
 import struct
 import os
 import exsparams
@@ -15,49 +16,74 @@ import samplesearch
 def read_exsfile(pathname):
     data = open(pathname,'rb').read()
 
-    if data[0:4] == b'\x01\x01\x00\x00' or data[0:4] == b'\x01\x01\x00\x40':
-        pass
-    else:
-        print ("FILE IS NOT AN EXS FILE")
-        return
-
-    if data[16:20] != b'TBOS':
+    # Accept either byte order: the first header byte is 0x00 (big-endian) or
+    # 0x01 (little-endian), and the magic at offset 16 must be one we recognize.
+    valid_magics = exsblock.LITTLE_ENDIAN_MAGICS + exsblock.BIG_ENDIAN_MAGICS
+    if len(data) < exsblock.HEADER_SIZE or data[0] not in (0x00, 0x01) \
+            or bytes(data[16:20]) not in valid_magics:
         print ("FILE IS NOT AN EXS FILE")
         return
 
     instrument = None
-    chunks = []
-    offset = 0
     zone_ctr, group_ctr, sample_ctr = -1, -1, -1
-    while offset < len(data):
-        chunk_signature = data[offset : offset+4]
-        chunk_length    = struct.unpack_from('<I', data[offset + 4: offset + 8])[0] + 84
-        chunk_data      = data[offset + 8: offset + chunk_length]
+    blocks = exsblock.iter_blocks(data)
+    while True:
+        try:
+            block = next(blocks)
+        except StopIteration:
+            break
+        except ValueError as e:
+            # We hit a header we cannot make sense of. Either trailing
+            # padding/garbage after an otherwise complete instrument (keep what
+            # we have), or an unsupported container layout -- e.g. some legacy
+            # embedded-sample EXS variants that even ConvertWithMoss cannot read,
+            # where blocks are non-contiguous. Never fabricate data: bail.
+            if instrument is None or not instrument.zones:
+                print (f"UNSUPPORTED EXS LAYOUT: {os.path.split(pathname)[1]} ({e})")
+                return None
+            print (f"NOTE: stopped reading {os.path.split(pathname)[1]} early ({e})")
+            break
 
-        if chunk_signature == b'\x01\x01\x00\x00' or chunk_signature == b'\x01\x01\x00\x40': # EXS header
-            instrument = exsclasses.parse_instrument(chunk_data)
-            if instrument.name == "(null)": instrument.name = os.path.split(pathname)[1]
-            instrument.pathname = pathname
-        elif chunk_signature == b'\x01\x01\x00\x01' or chunk_signature == b'\x01\x01\x00\x41': # zone
-            zone_ctr += 1
-            zone = exsclasses.parse_zone(chunk_data,id=zone_ctr)
-            instrument.zones.append(zone)
-        elif chunk_signature == b'\x01\x01\x00\x02' or chunk_signature == b'\x01\x01\x00\x42': # group
-            group_ctr += 1
-            group = exsclasses.parse_group(chunk_data,id=group_ctr)
-            instrument.groups.append(group)
-        elif chunk_signature == b'\x01\x01\x00\x03' or chunk_signature == b'\x01\x01\x00\x43': # sample
-            sample_ctr += 1
-            sample = exsclasses.parse_sample(chunk_data, id=sample_ctr)
-            sample.exsfile_pos = offset
-            instrument.samples.append(sample)
-        elif chunk_signature == b'\x01\x01\x00\x04' or chunk_signature == b'\x01\x01\x00\x44': # params
-            instrument.param_data = chunk_data
-            instrument.params = exsclasses.parse_params(chunk_data)
-        else:
-            print ("UNKNOWN CHUNK SIGNATURE!",chunk_signature)
+        endian = block.endian
 
-        offset += chunk_length
+        try:
+            if block.type == exsblock.TYPE_INSTRUMENT:
+                instrument = exsclasses.parse_instrument(block.legacy_data)
+                if instrument.name == "(null)": instrument.name = os.path.split(pathname)[1]
+                instrument.pathname = pathname
+            elif instrument is None:
+                # The file did not start with an instrument block -- not
+                # something we know how to read.
+                print (f"UNSUPPORTED EXS LAYOUT: {os.path.split(pathname)[1]} (no instrument header)")
+                return None
+            elif block.type == exsblock.TYPE_ZONE:
+                zone_ctr += 1
+                zone = exsclasses.parse_zone(block.legacy_data, id=zone_ctr, endian=endian)
+                instrument.zones.append(zone)
+            elif block.type == exsblock.TYPE_GROUP:
+                group_ctr += 1
+                group = exsclasses.parse_group(block.legacy_data, id=group_ctr, endian=endian)
+                instrument.groups.append(group)
+            elif block.type == exsblock.TYPE_SAMPLE:
+                sample_ctr += 1
+                sample = exsclasses.parse_sample(block.legacy_data, id=sample_ctr, endian=endian)
+                sample.exsfile_pos = block.offset
+                instrument.samples.append(sample)
+            elif block.type == exsblock.TYPE_PARAMS:
+                instrument.param_data = block.legacy_data
+                instrument.params = exsclasses.parse_params(block.legacy_data, endian=endian)
+            elif block.type in exsblock.SKIPPABLE_TYPES:
+                # Recognized but unused: zero-padding and the binary-plist
+                # metadata blocks newer Logic/Sampler files carry. Skipped; the
+                # writer doesn't emit them.
+                pass
+            else:
+                print ("UNKNOWN EXS BLOCK TYPE!", hex(block.type), repr(block.name))
+        except (ValueError, struct.error) as e:
+            # A core block we could not decode (e.g. a truncated/degenerate zone
+            # in some legacy files). Don't return a half-built instrument.
+            print (f"UNSUPPORTED EXS LAYOUT: {os.path.split(pathname)[1]} (cannot parse {hex(block.type)} block: {e})")
+            return None
 
     return instrument
 

@@ -84,28 +84,33 @@ class EXSZone():
     tailend:        int = 0
 
 
-def parse_zone(data,id=None):
+def parse_zone(data,id=None,endian='<'):
     zone = EXSZone()
     zone.data = data
 
-    if len(zone.data) == 180:
-        struct_format = "<8x4s64sBBbbbbBBxBBxIIIIIbBB42xBbbbxB5xiI8x"
-    elif len(zone.data) == 184:
-        struct_format = "<8x4s64sBBbbbbBBxBBxIIIIIbBB42xBbbbxB5xiI8xI"
-    elif len(zone.data) == 204:
-        struct_format = "<8x4s64sBBbbbbBBxBBxIIIIIbBB42xBbbbxB5xiI8xIIiII4x"
-    elif len(zone.data) == 208:
-        struct_format = "<8x4s64sBBbbbbBBxBBxIIIIIbBB42xBbbbxB5xiI8xIIiII8x"
-    elif len(zone.data) == 212:
-        struct_format = "<8x4s64sBBbbbbBBxBBxIIIIIbBB42xBbbbxB5xiI8xIIiII8xf"
-    elif len(zone.data) == 216 or len(zone.data) == 224:
-        struct_format = "<8x4s64sBBbbbbBBxBBxIIIIIbBB42xBbbbxB5xiI8xIIiII8xfI"
+    # Zone content grew across EXS versions; each longer layout only appends
+    # trailing fields. Pick the largest layout that fits, so unusual in-between
+    # lengths parse what they can instead of crashing.
+    zone_formats = (
+        (180, "<8x4s64sBBbbbbBBxBBxIIIIIbBB42xBbbbxB5xiI8x"),
+        (184, "<8x4s64sBBbbbbBBxBBxIIIIIbBB42xBbbbxB5xiI8xI"),
+        (204, "<8x4s64sBBbbbbBBxBBxIIIIIbBB42xBbbbxB5xiI8xIIiII4x"),
+        (208, "<8x4s64sBBbbbbBBxBBxIIIIIbBB42xBbbbxB5xiI8xIIiII8x"),
+        (212, "<8x4s64sBBbbbbBBxBBxIIIIIbBB42xBbbbxB5xiI8xIIiII8xf"),
+        (216, "<8x4s64sBBbbbbBBxBBxIIIIIbBB42xBbbbxB5xiI8xIIiII8xfI"),
+    )
+    struct_format = None
+    for min_len, fmt in zone_formats:
+        if len(zone.data) >= min_len:
+            struct_format = fmt
+    if struct_format is None:
+        raise ValueError(f"EXS zone block too short: {len(zone.data)} bytes")
 
+    struct_format = endian + struct_format[1:]  # honor the block's byte order
     struct_size   = struct.calcsize(struct_format)
     #print (struct_size)
     #print (len(zone.data))
     values = list(struct.unpack(struct_format,data[:struct_size]))
-    assert (values[0] == b'TBOS')
     # clean up name
     values[1] = values[1].split(b'\x00',maxsplit=1)[0].decode()
     #print (values)
@@ -296,27 +301,32 @@ class EXSGroup():
     enableby_tempo:         bool = False  # 7
 
 
-def parse_group(data,id=None):
+def parse_group(data,id=None,endian='<'):
     group = EXSGroup()
     group.data = data
     #print ("len(group.data)",len(group.data))
 
-    if len(group.data) == 168:
-        struct_format = "<8x4s64sbbBBBBBb8xH14xBBBB2xBBxbxb12xiiiixBBB4xiBBBBBBBB"
-    elif len(group.data) == 172:
-        struct_format = "<8x4s64sbbBBBBBb8xH14xBBBB2xBBxbxb12xiiiixBBB4xiBBBBBBBB2xbb"
-    elif len(group.data) == 196:
-        struct_format = "<8x4s64sbbBBBBBb8xH14xBBBB2xBBxbxb12xiiiixBBB4xiBBBBBBBB2xbbiiiiii"
-    elif len(group.data) == 200:
-        struct_format = "<8x4s64sbbBBBBBb8xH14xBBBB2xBBxbxb12xiiiixBBB4xiBBBBBBBB2xbbiiiiii4x"
-    elif len(group.data) >= 208:
-        struct_format = "<8x4s64sbbBBBBBb8xH14xBBBB2xBBxbxb12xiiiixBBB4xiBBBBBBBB2xbbiiiiii4xii"
+    # As with zones, group layouts only append trailing fields across versions.
+    # Pick the largest layout that fits the block.
+    group_formats = (
+        (168, "<8x4s64sbbBBBBBb8xH14xBBBB2xBBxbxb12xiiiixBBB4xiBBBBBBBB"),
+        (172, "<8x4s64sbbBBBBBb8xH14xBBBB2xBBxbxb12xiiiixBBB4xiBBBBBBBB2xbb"),
+        (196, "<8x4s64sbbBBBBBb8xH14xBBBB2xBBxbxb12xiiiixBBB4xiBBBBBBBB2xbbiiiiii"),
+        (200, "<8x4s64sbbBBBBBb8xH14xBBBB2xBBxbxb12xiiiixBBB4xiBBBBBBBB2xbbiiiiii4x"),
+        (208, "<8x4s64sbbBBBBBb8xH14xBBBB2xBBxbxb12xiiiixBBB4xiBBBBBBBB2xbbiiiiii4xii"),
+    )
+    struct_format = None
+    for min_len, fmt in group_formats:
+        if len(group.data) >= min_len:
+            struct_format = fmt
+    if struct_format is None:
+        raise ValueError(f"EXS group block too short: {len(group.data)} bytes")
 
+    struct_format = endian + struct_format[1:]  # honor the block's byte order
     struct_size   = struct.calcsize(struct_format)
     #print (struct_size)
 
     values = list(struct.unpack(struct_format,data[:struct_size]))
-    assert (values[0] == b'TBOS')
     # clean up name
     values[1] = values[1].split(b'\x00',maxsplit=1)[0].decode()
     #print (values)
@@ -494,20 +504,28 @@ class EXSSample():
     merge_monolith_sample_end:   int = 0
 
 
-def parse_sample(data,id=None):
+def parse_sample(data,id=None,endian='<'):
     sample = EXSSample()
     sample.data = data
     #print (len(sample.data))
 
-    if len(sample.data) in (668,676):
-        struct_format = "<8x4s64sIIIIII4x4sII40x256s256s"
-    elif len(sample.data) == 412:
-        struct_format = "<8x4s64sIIIIII4x4sII40x256s"
+    # The 412-byte layout has only the folder path; the longer layout also
+    # carries the file name. Pick the largest that fits.
+    sample_formats = (
+        (412, "<8x4s64sIIIIII4x4sII40x256s"),
+        (668, "<8x4s64sIIIIII4x4sII40x256s256s"),
+    )
+    struct_format = None
+    for min_len, fmt in sample_formats:
+        if len(sample.data) >= min_len:
+            struct_format = fmt
+    if struct_format is None:
+        raise ValueError(f"EXS sample block too short: {len(sample.data)} bytes")
+    struct_format = endian + struct_format[1:]  # honor the block's byte order
     struct_size   = struct.calcsize(struct_format)
     #print (f'\n{struct_size}')
 
     values = list(struct.unpack(struct_format,data[:struct_size]))
-    assert (values[0] == b'TBOS')
     # clean up name
     values[1]  = values[1].split(b'\x00',maxsplit=1)[0].decode()
     values[11] = values[11].split(b'\x00', maxsplit=1)[0].decode()
@@ -567,32 +585,36 @@ def export_sample(sample):
     return b
 
 
-def parse_params(data):
+def parse_params(data,endian='<'):
     chunk_length = len(data)
 
     # print (chunk_length)
     # print (data[:40])
     # print ("HI!")
 
-    struct_format = "<8x4s64sI"
+    struct_format = endian + "8x4s64sI"
     struct_size = struct.calcsize(struct_format)
     #print (f'\n{struct_size}')
 
     values = list(struct.unpack(struct_format, data[:struct_size]))
     # clean up name
     values[1] = values[1].split(b'\x00', maxsplit=1)[0].decode()
-    assert (values[0] == b'TBOS')
     #assert (values[1] == 'Default Param')
 
     old_style_param_count = values[2]
-    old_style_param_ids   = list(struct.unpack(f'<{old_style_param_count}B', data[80:80+old_style_param_count]))
-    old_style_param_data  = list(struct.unpack(f'<{old_style_param_count}h', data[80+old_style_param_count:80+old_style_param_count*3]))
+    old_style_param_ids   = list(struct.unpack(f'{endian}{old_style_param_count}B', data[80:80+old_style_param_count]))
+    old_style_param_data  = list(struct.unpack(f'{endian}{old_style_param_count}h', data[80+old_style_param_count:80+old_style_param_count*3]))
     params = dict(zip(old_style_param_ids, old_style_param_data))
 
     new_style_param_offset = (80+old_style_param_count*3) + 4
     if len(data) > new_style_param_offset:
-        new_style_param_count  = struct.unpack('<I', data[new_style_param_offset-4:new_style_param_offset])[0]
-        new_style_param_IDs_and_data = struct.unpack(f'<{new_style_param_count*2}h', data[new_style_param_offset: new_style_param_offset+new_style_param_count * 4])
+        new_style_param_count  = struct.unpack(endian + 'I', data[new_style_param_offset-4:new_style_param_offset])[0]
+        # Some converted files store a corrupt/oversized count here; never read
+        # past the end of the block.
+        max_pairs = (len(data) - new_style_param_offset) // 4
+        if new_style_param_count > max_pairs:
+            new_style_param_count = max_pairs
+        new_style_param_IDs_and_data = struct.unpack(f'{endian}{new_style_param_count*2}h', data[new_style_param_offset: new_style_param_offset+new_style_param_count * 4])
 
         new_params = dict(zip(new_style_param_IDs_and_data[::2], new_style_param_IDs_and_data[1::2]))
         params.update(new_params)
