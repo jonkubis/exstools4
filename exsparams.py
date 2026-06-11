@@ -77,6 +77,9 @@ PARAM_LFO_3_POSITIVE_OR_MIDPOINT = 0x15c
 PARAM_LFO_3_TEMPO_SYNC          = 0x15d
 PARAM_LFO_3_FADE_IN_OR_OUT      = 0x189
 
+# ENV1 = amplitude envelope, ENV2 = filter envelope. The Attack/Decay/Release time
+# params below are byte values 0-127; convert to/from milliseconds with MS_LUT /
+# env_value_to_ms() / env_ms_to_value() (defined near the bottom of this file).
 PARAM_ENV2_TYPE                 = 0x16a # 0=AD, 1=AR, 2=ADSR, 3=AHDSR, 4=DADSR, 5=DAHDSR
 PARAM_ENV2_VEL_SENS             = 0x17d
 
@@ -247,10 +250,28 @@ undocumented_parameter_ids = [
 # old-style slots first (real files write at most ~90, so there is headroom).
 parameter_order += undocumented_parameter_ids
 
-MS_LUT = [0,0.003,0.009,0.024,0.049,0.092,0.157,0.252,0.384,0.562,0.797,1.097,1.476,1.946,2.519,3.21,4.035,5.009,6.15,7.475,9.004,10.757,12.753,15.015,17.566,20.428,23.627,27.187,31.136,35.5,40.307,45.586,51.368,57.684,64.564,72.043,80.152,88.929,98.406,108.62,119.61,131.41,144.07,157.62,172.11,187.57,204.05,221.59,240.25,260.05,281.05,303.31,326.85,351.75,378.03,405.77,435,465.79,498.18,532.23,568,605.54,644.91,686.18,729.39,774.61,821.9,871.32,922.94,976.82,1033,1091.6,1152.6,1216.2,1282.4,1351.2,1422.8,1497.2,1574.5,1654.7,1737.9,1824.3,1913.8,2006.5,2102.7,2202.2,2305.2,2411.8,2522,2636,2753.8,2875.5,3001.2,3130.9,3264.9,3403,3545.5,3692.5,3844,4000,4160.8,4326.4,4496.9,4672.4,4852.9,5038.7,5229.7,5426.1,5628,5835.4,6048.6,6267.5,6492.3,6723.2,6960.1,7203.2,7452.6,7708.5,7970.9,8239.9,8515.7,8798.4,9088,9384.8,9688.7,10000]
+# EXS24 envelope time table. Maps an Attack / Decay / Release BYTE VALUE (0-127, as
+# stored in the ENV1_*/ENV2_* time parameters) to the actual time in MILLISECONDS.
+# Index this list directly by the byte value (MS_LUT[value] -> milliseconds); it has
+# exactly 128 entries, one per value 0..127. Sustain is a 0-127 LEVEL, not a time, so
+# it is not in this table. Use env_value_to_ms() / env_ms_to_value() below.
+MS_LUT = [0,0.001,0.002,0.003,0.009,0.024,0.049,0.092,0.157,0.252,0.384,0.562,0.797,1.097,1.476,1.946,2.519,3.21,4.035,5.009,6.15,7.475,9.004,10.757,12.753,15.015,17.566,20.428,23.627,27.187,31.136,35.5,40.307,45.586,51.368,57.684,64.564,72.043,80.152,88.929,98.406,108.62,119.61,131.41,144.07,157.62,172.11,187.57,204.05,221.59,240.25,260.05,281.05,303.31,326.85,351.75,378.03,405.77,435,465.79,498.18,532.23,568,605.54,644.91,686.18,729.39,774.61,821.9,871.32,922.94,976.82,1033,1091.6,1152.6,1216.2,1282.4,1351.2,1422.8,1497.2,1574.5,1654.7,1737.9,1824.3,1913.8,2006.5,2102.7,2202.2,2305.2,2411.8,2522,2636,2753.8,2875.5,3001.2,3130.9,3264.9,3403,3545.5,3692.5,3844,4000,4160.8,4326.4,4496.9,4672.4,4852.9,5038.7,5229.7,5426.1,5628,5835.4,6048.6,6267.5,6492.3,6723.2,6960.1,7203.2,7452.6,7708.5,7970.9,8239.9,8515.7,8798.4,9088,9384.8,9688.7,10000]
 
-def ms_to_index(list, K):
-    return min(list, key=lambda x: abs(x-K))
+
+def env_value_to_ms(value):
+    """EXS envelope Attack/Decay/Release byte value (0-127) -> milliseconds."""
+    return MS_LUT[value]
+
+
+def ms_to_index(table, ms):
+    """Return the index in `table` whose value is closest to `ms` (i.e. the byte
+    value for a milliseconds target). Returns the index, matching its name."""
+    return min(range(len(table)), key=lambda i: abs(table[i] - ms))
+
+
+def env_ms_to_value(ms):
+    """Milliseconds -> nearest EXS envelope Attack/Decay/Release byte value (0-127)."""
+    return ms_to_index(MS_LUT, ms)
 
 params_dict = dict(vars())
 for k in list(params_dict.keys()):
