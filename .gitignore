@@ -3,3 +3,5 @@
 /ewi.py
 /tests/baseline.json
 .DS_Store
+/ghidra_decomp/
+__pycache__/

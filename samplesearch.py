@@ -18,7 +18,7 @@ def get_sample_info(pathname):
     sample = EXSSample()
     os_size = os.stat(pathname).st_size # reported size by the OS
     sample.folder, sample.filename = os.path.split(pathname)
-    sample.name = os.path.splitext(sample.filename)[0]
+    sample.Name = os.path.splitext(sample.filename)[0]
 
     with open(pathname,'rb') as infile:
         infile.seek(0, os.SEEK_END)
@@ -46,11 +46,11 @@ def get_sample_info(pathname):
 
             frame_length = values[4] # divide the data chunk length by this to get the total number of samples later
 
-            sample.fourdigitcode = b'EVAW'
-            sample.filesize = f_size
-            sample.iscompressed = values[0] != 1
+            sample.fileType = b'EVAW'
+            sample.fileSize = f_size
+            sample.isCompressed = values[0] != 1
             sample.channels     = values[1]
-            sample.rate         = values[2]
+            sample.sampleRate         = values[2]
             sample.bitdepth     = values[5]
 
             chunk_size = 0
@@ -58,8 +58,8 @@ def get_sample_info(pathname):
                 infile.seek(chunk_size, os.SEEK_CUR)
                 chunk_id, chunk_size = struct.unpack("<4sI", infile.read(8))
 
-            sample.wavedatastart = infile.tell()
-            sample.length = chunk_size // frame_length # length in samples of the audio file
+            sample.dataOffset = infile.tell()
+            sample.frameCount = chunk_size // frame_length # length in samples of the audio file
 
         elif first_four == b'caff':
             caf_file_version, caf_file_flags = struct.unpack(">HH", infile.read(4))
@@ -79,13 +79,13 @@ def get_sample_info(pathname):
 
             frame_length = values[3] # divide the data chunk length by this to get the total number of samples later
 
-            sample.fourdigitcode = b'ffac'
-            sample.filesize = f_size
-            sample.iscompressed = values[1] != b'lpcm'
-            sample.rate = int(values[0])
+            sample.fileType = b'ffac'
+            sample.fileSize = f_size
+            sample.isCompressed = values[1] != b'lpcm'
+            sample.sampleRate = int(values[0])
             sample.bitdepth = values[6]
 
-            if sample.iscompressed: # we need to grab the length in samples from the 'pakt' chunk
+            if sample.isCompressed: # we need to grab the length in samples from the 'pakt' chunk
                 infile.seek(first_subchunk_pos,os.SEEK_SET)
                 chunk_size = 0
                 while chunk_id != b'pakt':
@@ -97,15 +97,15 @@ def get_sample_info(pathname):
 
                 data = infile.read(chunk_size)
                 values = list(struct.unpack(pakt_chunk_struct_format, data[:struct_size]))
-                sample.length = values[1]
+                sample.frameCount = values[1]
 
             chunk_size = 0
             while chunk_id != b'data':
                 infile.seek(chunk_size, os.SEEK_CUR)
                 chunk_id, chunk_size = struct.unpack(">4sQ", infile.read(12))
-                if not sample.iscompressed: sample.length = (chunk_size-4) // frame_length
+                if not sample.isCompressed: sample.frameCount = (chunk_size-4) // frame_length
 
-            sample.wavedatastart = infile.tell() + 4  # first 4 bytes of the CAF Data chunk are 'UInt32 mEditCount;' THEN the wave data
+            sample.dataOffset = infile.tell() + 4  # first 4 bytes of the CAF Data chunk are 'UInt32 mEditCount;' THEN the wave data
         elif first_four == b'FORM':  # AIF format
             main_chunk_size = struct.unpack(">I", infile.read(4))[0]  # should be filesize - 8
             fourdigitcode = infile.read(4)
@@ -125,16 +125,16 @@ def get_sample_info(pathname):
             expon, himant, lomant = values[3:6]
             # sign = -1 if expon < 0 else 1
             # expon = expon + 0x8000 if expon < 0 else expon
-            # if expon == himant == lomant == 0: sample.rate = 0.0
-            # elif expon == 0x7FFF: sample.rate = sign * 1.79769313486231e+308  # Approximation of huge value
-            # else: sample.rate = sign * (himant * 0x100000000 + lomant) * pow(2.0, expon - 16383 - 63)
+            # if expon == himant == lomant == 0: sample.sampleRate = 0.0
+            # elif expon == 0x7FFF: sample.sampleRate = sign * 1.79769313486231e+308  # Approximation of huge value
+            # else: sample.sampleRate = sign * (himant * 0x100000000 + lomant) * pow(2.0, expon - 16383 - 63)
             sample_rate = 0.0 if expon == himant == lomant == 0 else (-1 if expon < 0 else 1) * (1.79769313486231e+308 if expon == 0x7FFF else (himant * 0x100000000 + lomant) * pow(2.0, (expon + 0x8000 if expon < 0 else expon) - 16383 - 63))
 
-            sample.fourdigitcode = b'FFIA'
-            sample.filesize     = f_size
-            sample.iscompressed = 0
+            sample.fileType = b'FFIA'
+            sample.fileSize     = f_size
+            sample.isCompressed = 0
             sample.channels     = values[0]
-            sample.rate         = int(sample_rate)
+            sample.sampleRate         = int(sample_rate)
             sample.bitdepth     = values[2]
             frame_length = (sample.bitdepth // 8) * sample.channels
 
@@ -147,8 +147,8 @@ def get_sample_info(pathname):
             # infile.seek(chunk_size, os.SEEK_CUR)
             sample_start_offset, sample_block_size = struct.unpack(">II", infile.read(8))
 
-            sample.wavedatastart = infile.tell()
-            sample.length = chunk_size // frame_length # length in samples of the audio file
+            sample.dataOffset = infile.tell()
+            sample.frameCount = chunk_size // frame_length # length in samples of the audio file
 
         else:
             print ("UNSUPPORTED SAMPLE FORMAT:",first_four,"-- ABORTING!")
@@ -186,10 +186,10 @@ def check_if_match(sample,pathname,match_filesize=False):
 
     # if we are required to match filesize, let's check it!
     if match_filesize:
-        if sample.filesize != os.path.getsize(pathname):
-            print(f"{pathname} FILE SIZE DOES NOT MATCH! should be {sample.filesize} but is {os.path.getsize(pathname)}")
+        if sample.fileSize != os.path.getsize(pathname):
+            print(f"{pathname} FILE SIZE DOES NOT MATCH! should be {sample.fileSize} but is {os.path.getsize(pathname)}")
             candidate = get_sample_info(pathname)
-            print("HERE ARE THE SAMPLE LENGTHS:",sample.length, candidate.length)
+            print("HERE ARE THE SAMPLE LENGTHS:",sample.frameCount, candidate.frameCount)
 
             return False
 
@@ -205,7 +205,7 @@ def resolve_sample_locations(instrument,search_path=None,match_filesize=True):
     music_apps_path = os.path.join(user_path, "Music/Audio Music Apps/Sampler Instruments/")
 
     for s in instrument.samples:
-        if s.filename is None: s.filename = s.name
+        if s.filename is None: s.filename = s.Name
 
         # check first if the folder+filename in the EXS file is good -- if so, we don't need to do anything
         if check_if_match(s,s.folder,match_filesize=match_filesize): continue

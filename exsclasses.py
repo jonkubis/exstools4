@@ -26,62 +26,69 @@ class EXSInstrument():
     objects: list = field(default_factory=lambda: [])
     params:  dict = field(default_factory=lambda: {})
     param_data: str = None
+    passthrough_blocks: list = field(default_factory=lambda: [])  # raw bytes of aux blocks (0x0A archive etc.) to round-trip
+    is_modern: bool = False                                       # 0x40 type-byte flag (modern Sampler editor save)
+    original_chunk: bytes = None                                  # full original instrument chunk bytes, for byte-faithful round-trip
 
 
 def parse_instrument(data):
     instrument = EXSInstrument()
     instrument.data = data
-    instrument.name = data[12:76].split(b'\x00',maxsplit=1)[0].decode()
+    instrument.name = data[12:76].split(b'\x00',maxsplit=1)[0].decode('latin-1')
     return instrument
 
 
 @dataclass
 class EXSZone():
     data:           str = None
-    name:           str = "Zone #"
+    Name:           str = "Zone #"
     id:             int = None # set by parse function
     options:        int = 0
-    rootnote:       int = 60
-    finetune:       int = 0
-    pan:            int = 0
-    volumeadjust:   int = 0
-    volumescale:    int = 0
-    startnote:      int = 0
-    endnote:        int = 127
-    minvel:         int = 0
-    maxvel:         int = 127
-    samplestart:    int = 0
-    sampleend:      int = None
+    KeyNote:       int = 60
+    TuneFine:       int = 0
+    Pan:            int = 0
+    Volume:   int = 0
+    VolScale:    int = 0
+    FirstNote:      int = 0
+    LastNote:        int = 127
+    LowestVelocity:         int = 0
+    HighestVelocity:         int = 127
+    StartFrame:    int = 0
+    EndFrame:      int = None
     loopoptions:    int = 0 #default
-    loopstart:      int = 0
-    loopend:        int = None
-    loopcrossfade:  int = 0
-    looptune:       int = 0
-    loopenable:     bool = False
-    loopequalpower: bool = False
-    loopdirection:  int = 0
-    loopplaytoendonrelease: int = 0
+    SustainLoopStart:      int = 0
+    SustainLoopEnd:        int = None
+    SustainLoopXFade:  int = 0
+    SustainLoopDeTune:       int = 0
+    SustainLoop:     bool = False
+    SustainLoopXFadeEQPwr: bool = False
+    SustainLoopMode:  int = 0
+    LoopDisableOnRelease: bool = True  # INVERSE of the old loopplaytoendonrelease (default True == old 0)
 
-    oneshot:        bool = False
-    pitchtracking:  bool = True
-    reverse:        bool = False
+    OneShot:        bool = False
+    Pitched:  bool = True
+    Reverse:        bool = False
     velrangeenable: bool = True
     mute:           bool = False
 
     flexoptions:    int = 0
-    flexspeed:      int = 0
-    coarsetune:     int = 0
-    output:         int = 0
-    group:          int = -1
-    sampleindex:    int = 0
-    fadein:         int = 0
-    fadeout:        int = 0
-    anchor:         int = 0
-    tailtune:       int = 0
-    tailvolume:     int = 0
-    tailsampleindex: int = -1
-    tailstart:      int = 0
-    tailend:        int = 0
+    FlexSpeed:      int = 0
+    Tune:     int = 0
+    Output:         int = 0
+    Group:          int = -1
+    FileName:    int = 0
+    NumFadeInFrames:         int = 0
+    NumFadeOutFrames:        int = 0
+    SyncFrameOffset:         int = 0
+    TuneTail:       int = 0
+    VolumeTail:     int = 0
+    FileNameTail: int = -1
+    StartFrameTail:      int = 0
+    EndFrameTail:        int = 0
+    # Modern Sampler's precise (sub-dB) zone volume float at chunk 0xd0 — the engine
+    # writes it alongside the coarse integer `Volume` (within 1.0 of it). None = leave
+    # the source bytes untouched on export (so set it too if you change `Volume`).
+    VolumePrecise:       float = None
 
 
 def parse_zone(data,id=None,endian='<'):
@@ -112,59 +119,64 @@ def parse_zone(data,id=None,endian='<'):
     #print (len(zone.data))
     values = list(struct.unpack(struct_format,data[:struct_size]))
     # clean up name
-    values[1] = values[1].split(b'\x00',maxsplit=1)[0].decode()
+    values[1] = values[1].split(b'\x00',maxsplit=1)[0].decode('latin-1')
     #print (values)
 
     if id is not None: zone.id = id
-    zone.name         = values[1]   # Zone: Name
+    zone.Name         = values[1]   # Zone: Name
     zone.options      = values[2]   # Pitch, One-Shot, Reverse, VelocityRangeOn, Mute
-    zone.rootnote     = values[3]   # Pitch: Key
-    zone.finetune     = values[4]   # Pitch: Tune (decimal)
-    zone.pan          = values[5]   # Mixer: Pan
-    zone.volumeadjust = values[6]   # Mixer: Volume
-    zone.volumescale  = values[7]   # Mixer: Volume
-    zone.startnote    = values[8]   # Key Range: Low
-    zone.endnote      = values[9]   # Key Range: High
-    zone.minvel       = values[10]  # Velocity Range: Low
-    zone.maxvel       = values[11]  # Velocity Range: High
-    zone.samplestart  = values[12]  # Sample: Start
-    zone.sampleend    = values[13]  # Sample: End
-    zone.loopstart    = values[14]  # Loop: Start
-    zone.loopend      = values[15]  # Loop: End
-    zone.loopcrossfade = values[16]  # Loop: XFade
-    zone.looptune     = values[17]  # Loop: Tune
+    zone.KeyNote     = values[3]   # Pitch: Key
+    zone.TuneFine     = values[4]   # Pitch: Tune (decimal)
+    zone.Pan          = values[5]   # Mixer: Pan
+    zone.Volume = values[6]   # Mixer: Volume
+    zone.VolScale  = values[7]   # Mixer: Volume
+    zone.FirstNote    = values[8]   # Key Range: Low
+    zone.LastNote      = values[9]   # Key Range: High
+    zone.LowestVelocity       = values[10]  # Velocity Range: Low
+    zone.HighestVelocity       = values[11]  # Velocity Range: High
+    zone.StartFrame  = values[12]  # Sample: Start
+    zone.EndFrame    = values[13]  # Sample: End
+    zone.SustainLoopStart    = values[14]  # Loop: Start
+    zone.SustainLoopEnd      = values[15]  # Loop: End
+    zone.SustainLoopXFade = values[16]  # Loop: XFade
+    zone.SustainLoopDeTune     = values[17]  # Loop: Tune
     zone.loopoptions  = values[18]  # LoopOn, LoopEqualPower, PlayToEndOnRelease
-    zone.loopdirection= values[19]
+    zone.SustainLoopMode= values[19]
     zone.flexoptions  = values[20]  # FlexOn, FollowTempo
-    zone.flexspeed    = values[21]  # 0=1, 1=2, 2=4, 3=8
-    zone.tailtune     = values[22]  # Audio File Tail: Tune
-    zone.coarsetune   = values[23]  # Pitch: Tune (whole numbers)
-    zone.output       = values[24]  # Zone: Output
-    zone.group        = values[25]  # Group Assignment
-    zone.sampleindex  = values[26]  #
+    zone.FlexSpeed    = values[21]  # 0=1, 1=2, 2=4, 3=8
+    zone.TuneTail     = values[22]  # Audio File Tail: Tune
+    zone.Tune   = values[23]  # Pitch: Tune (whole numbers)
+    zone.Output       = values[24]  # Zone: Output
+    zone.Group        = values[25]  # Group Assignment
+    zone.FileName  = values[26]  #
     if len(zone.data) >= 184:
-        zone.fadeout      = values[27]  # Fade Out
+        zone.NumFadeOutFrames      = values[27]  # Fade Out
     if len(zone.data) >= 204:
-        zone.anchor       = values[28]  # Offset
-        zone.tailsampleindex = values[29] # Audio File Tail
-        zone.tailstart    = values[30]  # Audio File Tail: Start
-        zone.tailend      = values[31]  # Audio File Tail: End
+        zone.SyncFrameOffset       = values[28]  # Offset
+        zone.FileNameTail = values[29] # Audio File Tail
+        zone.StartFrameTail    = values[30]  # Audio File Tail: Start
+        zone.EndFrameTail      = values[31]  # Audio File Tail: End
     if len(zone.data) >= 212:
-        zone.tailvolume   = values[32]  # Audio File Tail: Volume
+        zone.VolumeTail   = values[32]  # Audio File Tail: Volume
     if len(zone.data) >= 216:
-        zone.fadein       = values[33]  # Fade In
+        zone.NumFadeInFrames       = values[33]  # Fade In
+
+    # Precise volume float (chunk 0xd0 / legacy 200) — sits in the trailing pad of
+    # the struct map; read it directly so it's a first-class, editable value.
+    if len(zone.data) >= 204:
+        zone.VolumePrecise = struct.unpack_from(endian + 'f', data, 200)[0]
 
     #zone options
-    zone.oneshot        = {0:False, 1:True}[zone.options & 1]  # 0 = OFF, 1  = ON
-    zone.pitchtracking  = {2:False, 0:True}[zone.options & 2]  # 0 = ON,  2  = OFF #<<<< !!!!!!!!!!
-    zone.reverse        = {0:False, 4:True}[zone.options & 4]  # 0 = OFF, 4  = ON
+    zone.OneShot        = {0:False, 1:True}[zone.options & 1]  # 0 = OFF, 1  = ON
+    zone.Pitched  = {2:False, 0:True}[zone.options & 2]  # 0 = ON,  2  = OFF #<<<< !!!!!!!!!!
+    zone.Reverse        = {0:False, 4:True}[zone.options & 4]  # 0 = OFF, 4  = ON
     zone.velrangeenable = {0:False, 8:True}[zone.options & 8]  # 0 = OFF, 8  = ON deprecated in new SAMPLER plugin
     zone.mute           = {0:False,16:True}[zone.options & 16] # 0 = OFF, 16 = ON (muted)
 
     #loop options
-    zone.loopenable     = {0:False, 1:True}[zone.loopoptions & 1]  # 0 = OFF, 1  = ON
-    zone.loopequalpower = {0:False, 2:True}[zone.loopoptions & 2]  # 0 = OFF, 2  = ON
-    zone.loopplaytoendonrelease = {0:False, 4:True}[zone.loopoptions & 4]  # 0 = OFF, 4  = ON
+    zone.SustainLoop     = {0:False, 1:True}[zone.loopoptions & 1]  # 0 = OFF, 1  = ON
+    zone.SustainLoopXFadeEQPwr = {0:False, 2:True}[zone.loopoptions & 2]  # 0 = OFF, 2  = ON
+    zone.LoopDisableOnRelease = {0:True, 4:False}[zone.loopoptions & 4]  # loopoptions bit2 set (play-to-end) -> NOT disabled
 
     # for field in fields(group):
     #     field_name = field.name
@@ -174,131 +186,183 @@ def parse_zone(data,id=None,endian='<'):
     return zone
 
 
+import re as _re
+
+def _merge_passthrough(original, rebuilt, struct_format):
+    """Reconcile a freshly-rebuilt chunk body with the source chunk so the
+    rebuild/edit path preserves every byte it does not model.
+
+    export_zone/group/sample pack a FIXED struct whose 'Nx' pad runs (and the
+    region past the modeled struct) are written as zeros. But Logic stores real,
+    populated state in some of those gaps -- e.g. a zone's float fine-volume at
+    chunk 0xd0, a group's boolean flag at body 0x08 -- so a plain rebuild
+    silently drops them. Here we start from the ORIGINAL bytes and overwrite only
+    the genuine semantic fields (every non-pad struct token except the leading
+    8-byte stream-bookkeeping word) with their current/edited values. Padding,
+    the bookkeeping word, and any trailing bytes are kept verbatim. Net effect:
+    an UNEDITED parse->export is byte-identical to the source, and unparsed
+    fields survive edits to neighbouring fields.
+
+    The output keeps the SOURCE chunk's exact length: legacy/short EXS24 chunks
+    (e.g. 212-byte zones without the trailing fade-in field) are preserved at
+    their own length rather than expanded to the full modern struct, so an
+    unedited rebuild is byte-identical for short and full chunks alike. A field
+    that does not fit inside the source length (only possible on a shorter legacy
+    layout) is simply not written -- consistent with that layout never carrying
+    it. Constructed objects (no source chunk) get the full freshly-built bytes.
+
+    Only merges when the source chunk is little-endian (magic TBOS/JBOS at chunk
+    0x10 == data[8:12]), matching the byte order export_* always writes. A
+    big-endian source is re-emitted little-endian via the plain rebuild (its
+    raw bytes are a different byte order and must NOT be spliced in)."""
+    if not original or bytes(original[8:12]) not in (b'TBOS', b'JBOS'):
+        return rebuilt
+    out = bytearray(original)
+    pos = 0
+    for i, tok in enumerate(_re.findall(r'\d*[a-zA-Z]', struct_format[1:])):  # skip byte-order char
+        size = struct.calcsize('<' + tok)
+        # i==0 is the leading 8s stream-bookkeeping word -> keep original; pads -> keep original;
+        # genuine fields -> take the (edited) rebuilt value, but only where it fits both buffers.
+        if i != 0 and not tok.endswith('x') and pos + size <= len(out) and pos + size <= len(rebuilt):
+            out[pos:pos + size] = rebuilt[pos:pos + size]
+        pos += size
+    return bytes(out)
+
+
 def export_zone(zone):
     to_pack = [
         b'\x00' * 8,
         b'TBOS',
-        zone.name.encode(),
+        zone.Name.encode('latin-1'),
         bool_to_byte([
             {0: False, 128: True}[zone.options & 128],  # pass through the high bits of the existing options
             {0: False, 64:  True}[zone.options & 64],
             {0: False, 32:  True}[zone.options & 32],
             zone.mute,
             zone.velrangeenable,
-            zone.reverse,
-            (not zone.pitchtracking),
-            zone.oneshot,
+            zone.Reverse,
+            (not zone.Pitched),
+            zone.OneShot,
         ]),
-        zone.rootnote,
-        zone.finetune,
-        zone.pan,
-        zone.volumeadjust,
-        zone.volumescale,
-        zone.startnote,
-        zone.endnote,
-        zone.minvel,
-        zone.maxvel,
-        zone.samplestart,
-        zone.sampleend,
-        zone.loopstart,
-        zone.loopend,
-        zone.loopcrossfade,
-        zone.looptune,
+        zone.KeyNote,
+        zone.TuneFine,
+        zone.Pan,
+        zone.Volume,
+        zone.VolScale,
+        zone.FirstNote,
+        zone.LastNote,
+        zone.LowestVelocity,
+        zone.HighestVelocity,
+        zone.StartFrame,
+        zone.EndFrame,
+        zone.SustainLoopStart,
+        zone.SustainLoopEnd,
+        zone.SustainLoopXFade,
+        zone.SustainLoopDeTune,
         bool_to_byte([
             {0: False, 128: True}[zone.loopoptions & 128],  # pass through the high bits of the existing options
             {0: False, 64:  True}[zone.loopoptions & 64],
             {0: False, 32:  True}[zone.loopoptions & 32],
             {0: False, 16:  True}[zone.loopoptions & 16],
             {0: False, 8:   True}[zone.loopoptions & 8],
-            zone.loopplaytoendonrelease,
-            zone.loopequalpower,
-            zone.loopenable
+            (not zone.LoopDisableOnRelease),  # on-disk play-to-end bit = NOT LoopDisableOnRelease
+            zone.SustainLoopXFadeEQPwr,
+            zone.SustainLoop
         ]),
-        zone.loopdirection,
+        zone.SustainLoopMode,
         zone.flexoptions, # need to unpack/repack this
-        zone.flexspeed,
-        zone.tailtune,
-        zone.coarsetune,
-        zone.output,
-        zone.group,
-        zone.sampleindex,
-        zone.fadeout,
+        zone.FlexSpeed,
+        zone.TuneTail,
+        zone.Tune,
+        zone.Output,
+        zone.Group,
+        zone.FileName,
+        zone.NumFadeOutFrames,
         # this would be the end of the old version EXS24 stuff
         # new format stuff follows
-        zone.anchor,
-        zone.tailsampleindex,
-        zone.tailstart,
-        zone.tailend,
-        zone.tailvolume,
-        zone.fadein
+        zone.SyncFrameOffset,
+        zone.FileNameTail,
+        zone.StartFrameTail,
+        zone.EndFrameTail,
+        zone.VolumeTail,
+        zone.NumFadeInFrames
     ]
 
     #old_struct_format = "<8s4s64sBBbbbbBBxBBxIIIIIbBB42xBbbbxB5xII8xI"
     struct_format = "<8s4s64sBBbbbbBBxBBxIIIIIbBB42xBbbbxB5xiI8xIIiII8xfI"
 
     b = struct.pack(struct_format,*to_pack)
-    return b
+    out = bytearray(_merge_passthrough(zone.data, b, struct_format))
+    # Promoted out-of-struct field: write the precise volume float at chunk 0xd0
+    # (legacy 200) when set; None leaves whatever the overlay preserved.
+    if zone.VolumePrecise is not None and len(out) >= 204:
+        struct.pack_into('<f', out, 200, zone.VolumePrecise)
+    return bytes(out)
 
 
 @dataclass
 class EXSGroup():
     data:                   str = None
-    name:                   str = None
+    Name:                   str = None
     id:                     int = None # set by parse function
-    volume:                 int = 0
-    pan:                    int = 0
-    polyphony:              int = 0 # 'Max'
+    Volume:                 int = 0
+    Pan:                    int = 0
+    Voices:              int = 0 # 'Max'
     options:                int = 1
     mute:                   bool = False
-    releasetriggerdecay:    bool = False
+    ReleaseTriggerDecay:    bool = False
     fixedsampleselect:      bool = False #https://www.logicprohelp.com/forums/topic/99786-whats-the-fss-on-exs24-edit-solved/
-    exclusive:              int = 0
-    minvel:                 int = 0
-    maxvel:                 int = 127
-    sampleselectrandomoffset: int = 0
-    releasetriggertime:     int = 0
-    velocityrangexfade:     int = 0
-    velocityrangexfadetype: int = 0
-    keyrangexfadetype:      int = 0
-    keyrangexfade:          int = 0
-    enablebytempolow:       int = 80
-    enablebytempohigh:      int = 140
-    cutoffoffset:           int = 0
-    resooffset:             int = 0
-    env1attackoffset:       int = 0
-    env1decayoffset:        int = 0
-    env1sustainoffset:      int = 0
-    env1releaseoffset:      int = 0
-    releasetrigger:         bool = False
-    output:                 int = 0
-    enablebynotevalue:      int = 0
-    roundrobingrouppos:     int = -1 #i.e. group ID to play after
+    ExclusiveClass:              int = 0
+    LowestVelocity:                 int = 0
+    HighestVelocity:                 int = 127
+    SampleSelectRandOffset: int = 0
+    ReleaseTriggerDecayTime:     int = 0
+    VelocityXFade:     int = 0
+    VelocityXFadeType: int = 0
+    NoteXFadeType:      int = 0
+    NoteXFade:          int = 0
+    SelByTempoLow:       int = 80
+    SelByTempoHigh:      int = 140
+    FilterCutOffOffset:           int = 0
+    FilterResonanceOffset:             int = 0
+    Env1AttackOffset:       int = 0
+    Env1DecayOffset:        int = 0
+    Env1SustainOffset:      int = 0
+    Env1ReleaseOffset:      int = 0
+    ReleaseTrigger:         bool = False
+    Output:                 int = 0
+    SelByNoteNote:      int = 0
+    SelByGroupCycle:     int = -1 #i.e. group ID to play after
     enablebytype:           int = 0
-    enablebycontrolvalue:   int = 0
-    enablebycontrollow:     int = 0
-    enablebycontrolhigh:    int = 0
-    startnote:              int = 0
-    endnote:                int = 127
-    enablebymidichannel:    int = 1
-    enablebyarticulation:   int = 1
-    enablebybenderlow:      int = 0
-    enablebybenderhigh:     int = 127
-    env1holdoffset:         int = 0
-    env2attackoffset:       int = 0
-    env2decayoffset:        int = 0
-    env2sustainoffset:      int = 0
-    env2releaseoffset:      int = 0
-    env2holdoffset:         int = 0
-    env1delayoffset:        int = 0
-    env2delayoffset:        int = 0
+    SelByCtrlCtrl:   int = 0
+    SelByCtrlLow:     int = 0
+    SelByCtrlHigh:    int = 0
+    FirstNote:              int = 0
+    LastNote:                int = 127
+    SelByChannelChannel:    int = 1
+    SelByArticNum:   int = 1
+    SelByPitchLow:      int = 0
+    SelByPitchHigh:     int = 127
+    Env1HoldOffset:         int = 0
+    Env2AttackOffset:       int = 0
+    Env2DecayOffset:        int = 0
+    Env2SustainOffset:      int = 0
+    Env2ReleaseOffset:      int = 0
+    Env2HoldOffset:         int = 0
+    Env1DelayOffset:        int = 0
+    Env2DelayOffset:        int = 0
+    # Boolean at group-body 0x08 (0/255), set in ~54% of factory groups; its exact
+    # meaning is undetermined. None = leave source bytes untouched on export (the
+    # overlay preserves it); set 0/255 to override.
+    unknown_byte_0x08:      int = None
 
-    enableby_note:          bool = False  # 1
-    enableby_roundrobin:    bool = False  # 2
-    enableby_control:       bool = False  # 3
-    enableby_bend:          bool = False  # 4
-    enableby_channel:       bool = False  # 5
-    enableby_articulation:  bool = False  # 6
-    enableby_tempo:         bool = False  # 7
+    SelByNote:          bool = False  # 1
+    SelByGroup:    bool = False  # 2
+    SelByCtrl:       bool = False  # 3
+    SelByPitch:          bool = False  # 4
+    SelByChannel:       bool = False  # 5
+    SelByArtic:  bool = False  # 6
+    SelByTempo:         bool = False  # 7
 
 
 def parse_group(data,id=None,endian='<'):
@@ -328,71 +392,74 @@ def parse_group(data,id=None,endian='<'):
 
     values = list(struct.unpack(struct_format,data[:struct_size]))
     # clean up name
-    values[1] = values[1].split(b'\x00',maxsplit=1)[0].decode()
+    values[1] = values[1].split(b'\x00',maxsplit=1)[0].decode('latin-1')
     #print (values)
 
     if id is not None: group.id = id
-    group.name                   = values[1]   # Group: Name
-    group.volume                 = values[2]   # Mixer: Volume
-    group.pan                    = values[3]   # Mixer: Pan
-    group.polyphony              = values[4]   # Playback: Voices
+    group.Name                   = values[1]   # Group: Name
+    group.Volume                 = values[2]   # Mixer: Volume
+    group.Pan                    = values[3]   # Mixer: Pan
+    group.Voices              = values[4]   # Playback: Voices
     group.options                = values[5]   # Mute, ReleaseTriggerDecay, FixedSampleSelect
-    group.exclusive              = values[6]   # Playback: Exclusive
-    group.minvel                 = values[7]   # Velocity Range: Low
-    group.maxvel                 = values[8]   # Velocity Range: High
-    group.sampleselectrandomoffset = values[9]
-    group.releasetriggertime     = values[10]   # Release Trigger: Time
-    group.velocityrangexfade     = values[11]-128     # Velocity Range: XFade
-    group.velocityrangexfadetype = values[12]  # Velocity Range: XFade Type
-    group.keyrangexfadetype      = values[13]  # Key Range: XFade Type
-    group.keyrangexfade          = values[14]-128 # Key Range: XFade
-    group.enablebytempolow       = values[15]  # Enable By Tempo: Low
-    group.enablebytempohigh      = values[16]  # Enable By Tempo: High
-    group.cutoffoffset           = values[17]  # Filter Offsets: Cutoff
-    group.resooffset             = values[18]  # Filter Offsets: Res.
-    group.env1attackoffset       = values[19]  # Envelope 1 Offsets: A (amp env)
-    group.env1decayoffset        = values[20]  # Envelope 1 Offsets: D (amp env)
-    group.env1sustainoffset      = values[21]  # Envelope 1 Offsets: S (amp env)
-    group.env1releaseoffset      = values[22]  # Envelope 1 Offsets: R (amp env)
-    group.releasetrigger         = {0: False, 1:  True}[values[23] & 1]  # Release Trigger: On (0 = OFF, 1  = ON)
-    group.output                 = values[24]  # Mixer: Output
-    group.enablebynotevalue      = values[25]  # Enable By Note: Value
-    group.roundrobingrouppos     = values[26]  # -1 if no RR; otherwise group ID to play after
+    group.ExclusiveClass              = values[6]   # Playback: Exclusive
+    group.LowestVelocity                 = values[7]   # Velocity Range: Low
+    group.HighestVelocity                 = values[8]   # Velocity Range: High
+    group.SampleSelectRandOffset = values[9]
+    # Boolean at body 0x08 (legacy 84), inside the struct map's 8x pad; expose it.
+    if len(group.data) >= 85:
+        group.unknown_byte_0x08 = struct.unpack_from(endian + 'B', data, 84)[0]
+    group.ReleaseTriggerDecayTime     = values[10]   # Release Trigger: Time
+    group.VelocityXFade     = values[11]-128     # Velocity Range: XFade
+    group.VelocityXFadeType = values[12]  # Velocity Range: XFade Type
+    group.NoteXFadeType      = values[13]  # Key Range: XFade Type
+    group.NoteXFade          = values[14]-128 # Key Range: XFade
+    group.SelByTempoLow       = values[15]  # Enable By Tempo: Low
+    group.SelByTempoHigh      = values[16]  # Enable By Tempo: High
+    group.FilterCutOffOffset           = values[17]  # Filter Offsets: Cutoff
+    group.FilterResonanceOffset             = values[18]  # Filter Offsets: Res.
+    group.Env1AttackOffset       = values[19]  # Envelope 1 Offsets: A (amp env)
+    group.Env1DecayOffset        = values[20]  # Envelope 1 Offsets: D (amp env)
+    group.Env1SustainOffset      = values[21]  # Envelope 1 Offsets: S (amp env)
+    group.Env1ReleaseOffset      = values[22]  # Envelope 1 Offsets: R (amp env)
+    group.ReleaseTrigger         = {0: False, 1:  True}[values[23] & 1]  # Release Trigger: On (0 = OFF, 1  = ON)
+    group.Output                 = values[24]  # Mixer: Output
+    group.SelByNoteNote      = values[25]  # Enable By Note: Value
+    group.SelByGroupCycle     = values[26]  # -1 if no RR; otherwise group ID to play after
     group.enablebytype           = values[27]  # 'On' for first 'Enable by' sets this
-    group.enablebycontrolvalue   = values[28]  # Enable by Control: Value
-    group.enablebycontrollow     = values[29]  # Enable by Control: Low
-    group.enablebycontrolhigh    = values[30]  # Enable by Control: High
-    group.startnote              = values[31]  # Key Range: Low
-    group.endnote                = values[32]  # Key Range: High
-    group.enablebymidichannel    = values[33]+1  # Enable By Channel: Value (originally zero-based)
-    group.enablebyarticulation   = values[34]  # Enable by Articulation: Value
+    group.SelByCtrlCtrl   = values[28]  # Enable by Control: Value
+    group.SelByCtrlLow     = values[29]  # Enable by Control: Low
+    group.SelByCtrlHigh    = values[30]  # Enable by Control: High
+    group.FirstNote              = values[31]  # Key Range: Low
+    group.LastNote                = values[32]  # Key Range: High
+    group.SelByChannelChannel    = values[33]+1  # Enable By Channel: Value (originally zero-based)
+    group.SelByArticNum   = values[34]  # Enable by Articulation: Value
     if len(group.data) >= 188:
-        group.enablebybenderlow      = values[35]  # Enable by Bend: Low
-        group.enablebybenderhigh     = values[36]  # Enable by Bend: High
+        group.SelByPitchLow      = values[35]  # Enable by Bend: Low
+        group.SelByPitchHigh     = values[36]  # Enable by Bend: High
     if len(group.data) >= 196:
-        group.env1holdoffset         = values[37]  # Envelope 1 Offsets: H (amp env)
-        group.env2attackoffset       = values[38]  # Envelope 2 Offsets: A (env 2)
-        group.env2decayoffset        = values[39]  # Envelope 2 Offsets: D (env 2)
-        group.env2sustainoffset      = values[40]  # Envelope 2 Offsets: S (env 2)
-        group.env2releaseoffset      = values[41]  # Envelope 2 Offsets: R (env 2)
-        group.env2holdoffset         = values[42]  # Envelope 2 Offsets: H (env 2)
+        group.Env1HoldOffset         = values[37]  # Envelope 1 Offsets: H (amp env)
+        group.Env2AttackOffset       = values[38]  # Envelope 2 Offsets: A (env 2)
+        group.Env2DecayOffset        = values[39]  # Envelope 2 Offsets: D (env 2)
+        group.Env2SustainOffset      = values[40]  # Envelope 2 Offsets: S (env 2)
+        group.Env2ReleaseOffset      = values[41]  # Envelope 2 Offsets: R (env 2)
+        group.Env2HoldOffset         = values[42]  # Envelope 2 Offsets: H (env 2)
     if len(group.data) >= 208:
-        group.env1delayoffset        = values[43]  # Envelope 2 Delay Offset (amp env)
-        group.env2delayoffset        = values[44]  # Envelope 1 Delay Offset (env 2)
+        group.Env1DelayOffset        = values[43]  # Env 1 (Amp) Delay Offset (delayAmpEnvOffset)
+        group.Env2DelayOffset        = values[44]  # Env 2 (Filter) Delay Offset (delayFilterEnvOffset)
 
     #group options
     group.mute                = {0: False, 16:  True}[group.options & 16]  # 0 = OFF, 1  = ON
-    group.releasetriggerdecay = {0: False, 64:  True}[group.options & 64]  # 0 = OFF, 1  = ON
+    group.ReleaseTriggerDecay = {0: False, 64:  True}[group.options & 64]  # 0 = OFF, 1  = ON
     group.fixedsampleselect   = {0: False, 128: True}[group.options & 128]  # 0 = OFF, 1  = ON -- Vel Range XfadeType OFF == 1/ON
 
     #group enable by
-    group.enableby_note         = group.enablebytype == 1
-    group.enableby_roundrobin   = group.enablebytype == 2
-    group.enableby_control      = group.enablebytype == 3
-    group.enableby_bend         = group.enablebytype == 4
-    group.enableby_channel      = group.enablebytype == 5
-    group.enableby_articulation = group.enablebytype == 6
-    group.enableby_tempo        = group.enablebytype == 7
+    group.SelByNote         = group.enablebytype == 1
+    group.SelByGroup   = group.enablebytype == 2
+    group.SelByCtrl      = group.enablebytype == 3
+    group.SelByPitch         = group.enablebytype == 4
+    group.SelByChannel      = group.enablebytype == 5
+    group.SelByArtic = group.enablebytype == 6
+    group.SelByTempo        = group.enablebytype == 7
 
     #print (group)
 
@@ -408,13 +475,13 @@ def export_group(group):
     to_pack = [
         b'\x00' * 8,
         b'TBOS',
-        group.name.encode(),
-        group.volume,
-        group.pan,
-        group.polyphony,
+        group.Name.encode('latin-1'),
+        group.Volume,
+        group.Pan,
+        group.Voices,
         bool_to_byte([
             group.fixedsampleselect,
-            group.releasetriggerdecay,
+            group.ReleaseTriggerDecay,
             {0: False, 32:  True}[group.options & 32], # pass through the other bits of the existing options
             group.mute,
             {0: False, 8:   True}[group.options & 8],
@@ -422,73 +489,77 @@ def export_group(group):
             {0: False, 2:   True}[group.options & 2],
             {0: False, 1:   True}[group.options & 1]
         ]),
-        group.exclusive,
-        group.minvel,
-        group.maxvel,
-        group.sampleselectrandomoffset,
-        group.releasetriggertime,
-        group.velocityrangexfade+128,
-        group.velocityrangexfadetype,
-        group.keyrangexfadetype,
-        group.keyrangexfade+128,
-        group.enablebytempolow,
-        group.enablebytempohigh,
-        group.cutoffoffset,
-        group.resooffset,
-        group.env1attackoffset,
-        group.env1decayoffset,
-        group.env1sustainoffset,
-        group.env1releaseoffset,
-        {False:0,True:1}[group.releasetrigger],
-        group.output,
-        group.enablebynotevalue,
-        group.roundrobingrouppos,
+        group.ExclusiveClass,
+        group.LowestVelocity,
+        group.HighestVelocity,
+        group.SampleSelectRandOffset,
+        group.ReleaseTriggerDecayTime,
+        group.VelocityXFade+128,
+        group.VelocityXFadeType,
+        group.NoteXFadeType,
+        group.NoteXFade+128,
+        group.SelByTempoLow,
+        group.SelByTempoHigh,
+        group.FilterCutOffOffset,
+        group.FilterResonanceOffset,
+        group.Env1AttackOffset,
+        group.Env1DecayOffset,
+        group.Env1SustainOffset,
+        group.Env1ReleaseOffset,
+        {False:0,True:1}[group.ReleaseTrigger],
+        group.Output,
+        group.SelByNoteNote,
+        group.SelByGroupCycle,
         group.enablebytype,
-        group.enablebycontrolvalue,
-        group.enablebycontrollow,
-        group.enablebycontrolhigh,
-        group.startnote,
-        group.endnote,
-        group.enablebymidichannel - 1,
-        group.enablebyarticulation,
-        group.enablebybenderlow,
-        group.enablebybenderhigh,
-        group.env1holdoffset,
-        group.env2attackoffset,
-        group.env2decayoffset,
-        group.env2sustainoffset,
-        group.env2releaseoffset,
-        group.env2holdoffset,
-        group.env1delayoffset,
-        group.env2delayoffset
+        group.SelByCtrlCtrl,
+        group.SelByCtrlLow,
+        group.SelByCtrlHigh,
+        group.FirstNote,
+        group.LastNote,
+        group.SelByChannelChannel - 1,
+        group.SelByArticNum,
+        group.SelByPitchLow,
+        group.SelByPitchHigh,
+        group.Env1HoldOffset,
+        group.Env2AttackOffset,
+        group.Env2DecayOffset,
+        group.Env2SustainOffset,
+        group.Env2ReleaseOffset,
+        group.Env2HoldOffset,
+        group.Env1DelayOffset,
+        group.Env2DelayOffset
     ]
     #struct_format ="<8x4s64sbbBBBBBb8xH14xBBBB2xBBxbxb12xiiiixBBB4xiBBBBBBBB2xbbiiiiii4xii"
     struct_format = "<8s4s64sbbBBBBBb8xH14xBBBB2xBBxbxb12xiiiixBBB4xiBBBBBBBB2xbbiiiiii4xii"
 
     b = struct.pack(struct_format, *to_pack)
-    return b
+    out = bytearray(_merge_passthrough(group.data, b, struct_format))
+    # Promoted out-of-struct field: the body-0x08 boolean (legacy 84) when set.
+    if group.unknown_byte_0x08 is not None and len(out) >= 85:
+        struct.pack_into('<B', out, 84, group.unknown_byte_0x08)
+    return bytes(out)
 
 
 
 @dataclass
 class EXSSample():
     data:               str = None
-    name:               str = None
+    Name:               str = None
     id:                 int = None # set by parse function
-    wavedatastart:      int = None
-    length:             int = None  # length of sample IN SAMPLES
-    rate:               int = None
+    dataOffset:      int = None
+    frameCount:             int = None  # length of sample IN SAMPLES
+    sampleRate:               int = None
     bitdepth:           int = None
     channels:           int = 2
-    fourdigitcode:      str = None  # default 'EVAW' = WAVE
+    fileType:      str = None  # default 'EVAW' = WAVE
     # WAVE     = b'EVAW'
     # AIFF     = b'FFIA'
     # CAF AAC  = b'ffac'
     # M4A AAC  = b' A4M'
     # MP3      = b'3GPM'
     # SD2      = b'f2dS'
-    filesize:           int = 0
-    iscompressed:       bool = False
+    fileSize:           int = 0
+    isCompressed:       bool = False
     folder:             str = None
     filename:           str = None
     # # Logic sometimes overwrites 'Samples\x00' over some Keymap files...
@@ -527,25 +598,25 @@ def parse_sample(data,id=None,endian='<'):
 
     values = list(struct.unpack(struct_format,data[:struct_size]))
     # clean up name
-    values[1]  = values[1].split(b'\x00',maxsplit=1)[0].decode()
-    values[11] = values[11].split(b'\x00', maxsplit=1)[0].decode()
+    values[1]  = values[1].split(b'\x00',maxsplit=1)[0].decode('latin-1')
+    values[11] = values[11].split(b'\x00', maxsplit=1)[0].decode('latin-1')
 
 
     if id is not None: sample.id = id
-    sample.name             = values[1]   # Sample Name
-    sample.wavedatastart    = values[2]   # Wave data start offset in file. In WAV files this is 4 bytes after 'data'
+    sample.Name             = values[1]   # Sample Name
+    sample.dataOffset    = values[2]   # Wave data start offset in file. In WAV files this is 4 bytes after 'data'
                                                 # (the 4 bytes following 'data' is the chunk size in bytes, wave data starts after.)
-    sample.length           = values[3]   # length of sample IN SAMPLES
-    sample.rate             = values[4]   # sample rate (samples per second, e.g. 44100, 48000)
+    sample.frameCount           = values[3]   # length of sample IN SAMPLES
+    sample.sampleRate             = values[4]   # sample rate (samples per second, e.g. 44100, 48000)
     sample.bitdepth         = values[5]   # bit depth (16 or 24 bits)
     sample.channels         = values[6]   # 1 = mono, 2 = stereo
     channels_again          = values[7]   # not sure why this is stored twice. they always match.
-    sample.fourdigitcode    = values[8]   #
-    sample.filesize         = values[9]   # size (in bytes) of the actual sample file, probably used for relinking
-    sample.iscompressed     = values[10]==1
+    sample.fileType    = values[8]   #
+    sample.fileSize         = values[9]   # size (in bytes) of the actual sample file, probably used for relinking
+    sample.isCompressed     = values[10]==1
     sample.folder           = values[11]
     if len(sample.data) >= 668:
-        values[12] = values[12].split(b'\x00', maxsplit=1)[0].decode()
+        values[12] = values[12].split(b'\x00', maxsplit=1)[0].decode('latin-1')
         sample.filename         = values[12]
 
     # for field in fields(sample):
@@ -560,29 +631,34 @@ def export_sample(sample):
     to_pack = [
         b'\x00' * 8,
         b'TBOS',
-        sample.name.encode(),
-        sample.wavedatastart,
-        sample.length,
-        sample.rate,
+        sample.Name.encode('latin-1'),
+        sample.dataOffset,
+        sample.frameCount,
+        sample.sampleRate,
         sample.bitdepth,
         sample.channels,
         sample.channels, #yep! again
-        sample.fourdigitcode,
-        sample.filesize,
-        {False: 0, True: 1}[sample.iscompressed],
-        {False: b'\x00\x00\x00\x00', True: b'PMOC'}[sample.iscompressed],
+        sample.fileType,
+        sample.fileSize,
+        {False: 0, True: 1}[sample.isCompressed],
+        {False: b'\x00\x00\x00\x00', True: b'PMOC'}[sample.isCompressed],
         16, #not sure, but always 16! even at 24 bit
-        sample.folder.encode(),
+        sample.folder.encode('latin-1'),
     ]
 
     struct_format = "<8s4s64sIIIIII4x4sII4sI32x256s"
 
     if sample.filename is not None:
         struct_format += '256s8x'
-        to_pack.append(sample.filename.encode())
+        to_pack.append(sample.filename.encode('latin-1'))
 
     b = struct.pack(struct_format, *to_pack)
-    return b
+    # parse_sample doesn't read the codec fourcc (sf10) or the constant-16 (sf11);
+    # export synthesizes them from isCompressed, which can differ from the source
+    # (e.g. 'lpcm'/'mcpl'). Mark them pad for the overlay so a parsed sample keeps
+    # its original bytes there; constructed samples (no .data) still get the synth.
+    overlay_fmt = struct_format.replace('4sI32x', '4x4x32x')
+    return _merge_passthrough(sample.data, b, overlay_fmt)
 
 
 def parse_params(data,endian='<'):
@@ -598,7 +674,7 @@ def parse_params(data,endian='<'):
 
     values = list(struct.unpack(struct_format, data[:struct_size]))
     # clean up name
-    values[1] = values[1].split(b'\x00', maxsplit=1)[0].decode()
+    values[1] = values[1].split(b'\x00', maxsplit=1)[0].decode('latin-1')
     #assert (values[1] == 'Default Param')
 
     old_style_param_count = values[2]

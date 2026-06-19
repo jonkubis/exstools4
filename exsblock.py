@@ -77,10 +77,10 @@ class EXSBlock:
     """
 
     __slots__ = ("type", "name", "index", "content", "is_big_endian", "offset",
-                 "legacy_data")
+                 "legacy_data", "raw", "raw_type")
 
     def __init__(self, type, name="", index=0, content=b"", is_big_endian=False,
-                 offset=0, legacy_data=b""):
+                 offset=0, legacy_data=b"", raw=b"", raw_type=None):
         self.type = type
         self.name = name
         self.index = index
@@ -88,6 +88,8 @@ class EXSBlock:
         self.is_big_endian = is_big_endian
         self.offset = offset
         self.legacy_data = legacy_data
+        self.raw = raw                                  # full block bytes (header+content), for verbatim passthrough
+        self.raw_type = type if raw_type is None else raw_type  # unmasked type byte (low nibble=type, high bits=flags)
 
     @property
     def endian(self):
@@ -113,10 +115,16 @@ class EXSBlock:
 
         # The high bits of the type byte are flags (0x40 and 0x80 occur in the
         # wild); the real type is the low nibble.
-        block_type = data[offset + 3] & 0x0F
+        raw_type_byte = data[offset + 3]
+        block_type = raw_type_byte & 0x0F
 
         endian = ">" if is_big_endian else "<"
         size, index = struct.unpack_from(endian + "II", data, offset + 4)
+        # A 0x80 flag on the type byte marks a masked size: only the low 15 bits hold the
+        # real content length (Logic masks the size with 0x7fff for these chunks,
+        # used by the JBOS/SOBJ "monolithic" variant). Without this the reader over-skips.
+        if raw_type_byte & 0x80:
+            size &= 0x7FFF
         # (the uint32 of flags at offset+12 is read as part of legacy_data below)
 
         magic = bytes(data[offset + 16:offset + 20])
@@ -127,11 +135,19 @@ class EXSBlock:
         name = data[offset + 20:offset + 84].split(b"\x00", 1)[0].decode("latin-1")
 
         end = offset + HEADER_SIZE + size
+        if end > len(data):
+            # The block's declared size runs past EOF -- the file is truncated/cut off
+            # mid-block. Raise so read_exsfile can keep the complete blocks read so far
+            # (the same graceful path as a malformed trailing header) instead of failing.
+            raise ValueError(
+                f"truncated block at offset {offset}: declared size {size} "
+                f"needs {end} bytes but file is {len(data)}")
         content = data[offset + HEADER_SIZE:end]
         legacy_data = data[offset + 8:end]  # index + flags + magic + name + content
+        raw = bytes(data[offset:end])       # the complete block, for verbatim passthrough
 
         block = cls(block_type, name, index, content, is_big_endian, offset,
-                    legacy_data)
+                    legacy_data, raw=raw, raw_type=raw_type_byte)
         return block, end
 
 

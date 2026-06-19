@@ -128,9 +128,9 @@ def parse_s9xx_sample(data):
     #print(values)
 
     sample = s9xx_sample()
-    sample.name             = values[0].decode().strip()
-    sample.length           = values[1]
-    sample.rate             = values[2]
+    sample.Name             = values[0].decode().strip()
+    sample.frameCount           = values[1]
+    sample.sampleRate             = values[2]
     sample.tuning           = values[3]
     sample.midi_note        = sample.tuning // 16
     sample.loudness_offset  = values[4]
@@ -143,11 +143,11 @@ def parse_s9xx_sample(data):
     sample.direction        = values[11]  # 'N' = normal, 'R' = reverse
     sample.absolute_addr    = values[12]  # updated by sampler
 
-    sample.sample_data = decode_akai_s900_sample_data(data[60:], sample.length)
+    sample.sample_data = decode_akai_s900_sample_data(data[60:], sample.frameCount)
 
     # data = np.array(sample.sample_data, dtype=np.int16)
-    # pathname = os.path.join('/Users/jonkubis/Desktop/OUT_TEST',sample.name+".wav")
-    # sf.write(pathname, data, sample.rate)
+    # pathname = os.path.join('/Users/jonkubis/Desktop/OUT_TEST',sample.Name+".wav")
+    # sf.write(pathname, data, sample.sampleRate)
 
     return sample
 
@@ -360,11 +360,11 @@ def akai_s9xx_imgfile_to_exs(pathname,output_path):
     samples = {}
 
     for sample in disk.samples:
-        samples[sample.name] = sample
+        samples[sample.Name] = sample
         data = np.array(sample.sample_data, dtype=np.int16)
-        pathname = os.path.join(output_path, sample.name + ".wav")
-        sf.write(pathname, data, sample.rate)
-        samples[sample.name].sample_data = None
+        pathname = os.path.join(output_path, sample.Name + ".wav")
+        sf.write(pathname, data, sample.sampleRate)
+        samples[sample.Name].sample_data = None
 
         print (sample,'\n')
 
@@ -411,33 +411,33 @@ def akai_s9xx_imgfile_to_exs(pathname,output_path):
                 s = get_sample_info(pathname)
                 inst.samples.append(s)
                 z = EXSZone()
-                z.name = s.name
-                z.id, z.sampleindex = sample_ctr, sample_ctr
-                z.rootnote = samples[sample_name].midi_note
-                z.startnote = k.key_lo
-                z.endnote = k.key_hi
-                z.samplestart = samples[sample_name].start
-                z.sampleend = samples[sample_name].end
-                z.loopstart = samples[sample_name].end - samples[sample_name].loop_start
-                z.loopend = z.sampleend
-                z.loopenable = samples[sample_name].loop_mode == 'L'
+                z.Name = s.Name
+                z.id, z.FileName = sample_ctr, sample_ctr
+                z.KeyNote = samples[sample_name].midi_note
+                z.FirstNote = k.key_lo
+                z.LastNote = k.key_hi
+                z.StartFrame = samples[sample_name].start
+                z.EndFrame = samples[sample_name].end
+                z.SustainLoopStart = samples[sample_name].end - samples[sample_name].loop_start
+                z.SustainLoopEnd = z.EndFrame
+                z.SustainLoop = samples[sample_name].loop_mode == 'L'
 
                 if s_ctr == 0:
-                    z.volumeadjust = int(k.sample_1_loudness_offset * 0.375)
+                    z.Volume = int(k.sample_1_loudness_offset * 0.375)
                     zonetune = k.sample_1_tuning_offset / 16  # tuning is in 16ths of a semitone
                     if two_layers:
-                        z.maxvel = k.vel_switch_thresh - 1
+                        z.HighestVelocity = k.vel_switch_thresh - 1
 
                 elif s_ctr == 1: # we automatically know it's two layers
-                    z.volumeadjust = int(k.sample_2_loudness_offset * 0.375)
+                    z.Volume = int(k.sample_2_loudness_offset * 0.375)
                     zonetune = k.sample_2_tuning_offset / 16  # tuning is in 16ths of a semitone
-                    z.minvel = k.vel_switch_thresh
+                    z.LowestVelocity = k.vel_switch_thresh
 
                 zonetunesemi = int(round(zonetune))
                 zonetunecents = int(round(100 * (zonetune + (-1 * zonetunesemi))))
-                z.coarsetune = zonetunesemi
-                z.finetune = zonetunecents
-                z.loopcrossfade = 2
+                z.Tune = zonetunesemi
+                z.TuneFine = zonetunecents
+                z.SustainLoopXFade = 2
 
                 inst.zones.append(z)
 

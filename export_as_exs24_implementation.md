@@ -17,6 +17,8 @@ library and the macOS factory EXS library (~48k files); the scaffold in
 
 ---
 
+> **Field & parameter names match Logic's Sampler 1:1** (`KeyNote`, `NumFadeOutFrames`, `Tune`/`TuneFine`, `SelByNote`, …).
+
 ## Mental model
 
 An EXS24 instrument is, for export purposes, four lists/dicts on one object:
@@ -31,7 +33,7 @@ EXSInstrument
 ```
 
 - A **zone** maps a region of the keyboard+velocity to a **sample**, by index:
-  `zone.sampleindex` is the position of its sample in `instrument.samples`.
+  `zone.FileName` is the position of its sample in `instrument.samples`.
 - **Velocity layers / round-robin** = several zones over the *same* key range with
   different `minvel/maxvel` (or group round-robin).
 - **Groups are optional.** `akais9xx.py` creates zero groups and works fine; zones
@@ -88,37 +90,37 @@ def export_to_exs24(instrument_name, output_dir, zone_specs, param_overrides=Non
         inst.samples.append(s)
 
         z = EXSZone()
-        z.name = s.name
+        z.Name = s.Name
         z.id = i
-        z.sampleindex = i                       # link zone -> samples[i]
+        z.FileName = i                       # link zone -> samples[i]
 
-        z.rootnote = spec["root"]
-        z.startnote = spec.get("key_low", 0)
-        z.endnote   = spec.get("key_high", 127)
+        z.KeyNote = spec["root"]
+        z.FirstNote = spec.get("key_low", 0)
+        z.LastNote   = spec.get("key_high", 127)
 
         z.velrangeenable = True
-        z.minvel = spec.get("vel_low", 1)
-        z.maxvel = spec.get("vel_high", 127)
+        z.LowestVelocity = spec.get("vel_low", 1)
+        z.HighestVelocity = spec.get("vel_high", 127)
 
         # Sample playback window, in FRAMES (not bytes). Both of these default to
         # None on a fresh EXSZone and MUST be set to ints before writing.
-        z.samplestart = spec.get("start", 0)
-        z.sampleend   = spec["end"] if spec.get("end") is not None else s.length
+        z.StartFrame = spec.get("start", 0)
+        z.EndFrame   = spec["end"] if spec.get("end") is not None else s.frameCount
 
         loop = spec.get("loop")
-        z.loopenable = loop is not None
-        z.loopstart, z.loopend = (loop if loop else (0, z.sampleend))
-        z.loopcrossfade = spec.get("loop_xfade", 0)
+        z.SustainLoop = loop is not None
+        z.SustainLoopStart, z.SustainLoopEnd = (loop if loop else (0, z.EndFrame))
+        z.SustainLoopXFade = spec.get("loop_xfade", 0)
 
         tune = spec.get("tune", 0.0)            # split a float into semitones + cents
-        z.coarsetune = int(round(tune))
-        z.finetune   = int(round(100 * (tune - z.coarsetune)))
+        z.Tune = int(round(tune))
+        z.TuneFine   = int(round(100 * (tune - z.Tune)))
 
-        z.volumeadjust = int(round(spec.get("gain_db", 0)))
-        z.pan = spec.get("pan", 0)
-        z.reverse = spec.get("reverse", False)
-        z.oneshot = spec.get("oneshot", False)
-        z.pitchtracking = spec.get("pitch_track", True)
+        z.Volume = int(round(spec.get("gain_db", 0)))
+        z.Pan = spec.get("pan", 0)
+        z.Reverse = spec.get("reverse", False)
+        z.OneShot = spec.get("oneshot", False)
+        z.Pitched = spec.get("pitch_track", True)
 
         inst.zones.append(z)
 
@@ -163,12 +165,12 @@ audio. So:
 | `length` | **length in frames** (samples-per-channel) |
 | `bitdepth` | 16 / 24 … |
 | `channels` | 1 / 2 |
-| `wavedatastart` | byte offset of audio data in the file |
-| `fourdigitcode` | `b'EVAW'` (WAV) / `b'FFIA'` (AIFF) / `b'ffac'` (CAF) … |
-| `filesize`, `iscompressed` | as on disk |
+| `dataOffset` | byte offset of audio data in the file |
+| `fileType` | `b'EVAW'` (WAV) / `b'FFIA'` (AIFF) / `b'ffac'` (CAF) … |
+| `fileSize`, `isCompressed` | as on disk |
 | `folder`, `filename`, `name` | from the path |
 
-Do **not** hand-fill these — let `get_sample_info` do it so `length`/`wavedatastart`
+Do **not** hand-fill these — let `get_sample_info` do it so `length`/`dataOffset`
 are right. (It raises `FileNotFoundError` for a missing path and only understands
 RIFF/AIFF/CAF.)
 
@@ -186,36 +188,36 @@ One `EXSZone` per sample-region. The fields that matter for export:
 
 | field | type / range | meaning | gotcha |
 |-------|--------------|---------|--------|
-| `sampleindex` | int | index into `inst.samples` | **must set**; default 0 |
-| `rootnote` | 0..127 | MIDI note the sample plays untransposed | |
-| `startnote` / `endnote` | 0..127 | key range low / high | |
-| `minvel` / `maxvel` | 1..127 | velocity range | set `velrangeenable=True` |
+| `FileName` | int | index into `inst.samples` | **must set**; default 0 |
+| `KeyNote` | 0..127 | MIDI note the sample plays untransposed | |
+| `FirstNote` / `LastNote` | 0..127 | key range low / high | |
+| `LowestVelocity` / `HighestVelocity` | 1..127 | velocity range | set `velrangeenable=True` |
 | `velrangeenable` | bool | apply the velocity range | default True |
-| `samplestart` / `sampleend` | frames | playback window | **both default `None` — must set ints** |
-| `loopenable` | bool | loop on | |
-| `loopstart` / `loopend` | frames | loop points within the sample | `loopend` also defaults `None` — **always set it** (use `sampleend` when not looping) |
-| `loopcrossfade` | frames | loop crossfade | optional |
-| `coarsetune` | semitones (signed) | pitch | split from a float tune |
-| `finetune` | cents (signed, ~-50..50) | pitch | `cents = round(100*(tune - round(tune)))` |
-| `volumeadjust` | dB (signed, ~-96..+12) | zone gain | |
+| `StartFrame` / `EndFrame` | frames | playback window | **both default `None` — must set ints** |
+| `SustainLoop` | bool | loop on | |
+| `SustainLoopStart` / `SustainLoopEnd` | frames | loop points within the sample | `SustainLoopEnd` also defaults `None` — **always set it** (use `EndFrame` when not looping) |
+| `SustainLoopXFade` | frames | loop crossfade | optional |
+| `Tune` | semitones (signed) | pitch | split from a float tune |
+| `TuneFine` | cents (signed, ~-50..50) | pitch | `cents = round(100*(tune - round(tune)))` |
+| `Volume` | dB (signed, ~-96..+12) | zone gain | |
 | `pan` | -50..+50 | | |
-| `reverse` / `oneshot` / `pitchtracking` / `mute` | bool | play flags | set booleans, **not** a raw options byte |
+| `reverse` / `OneShot` / `Pitched` / `mute` | bool | play flags | set booleans, **not** a raw options byte |
 | `group` | int | group index, or `-1` for none | default -1 |
 | `output` | int | output routing | leave 0 |
 
 **Frames, not bytes.** `samplestart/sampleend/loopstart/loopend` are all frame
-counts. For a whole, untrimmed sample: `samplestart=0`, `sampleend=sample.length`.
-Loops sit inside `[0, length]`, with `loopend` usually `< sampleend`.
+counts. For a whole, untrimmed sample: `samplestart=0`, `sampleend=sample.frameCount`.
+Loops sit inside `[0, length]`, with `SustainLoopEnd` usually `< sampleend`.
 
 **Velocity layering / round-robin:** emit multiple zones over the same key range.
 For two velocity layers split at threshold `T`: layer-A zone `maxvel=T-1`, layer-B
 zone `minvel=T` (see `akais9xx.py` lines ~425–434). For round-robin you also need a
-group with `enableby_roundrobin` set — out of scope for a first pass.
+group with `SelByGroup` set — out of scope for a first pass.
 
 **Booleans, not bit-twiddling.** The writer packs the zone "options" and "loop
-options" bytes from the boolean fields (`oneshot`, `pitchtracking` [inverted on
-disk], `reverse`, `velrangeenable`, `mute`, `loopenable`, `loopequalpower`,
-`loopplaytoendonrelease`). Just set the booleans.
+options" bytes from the boolean fields (`OneShot`, `Pitched` [inverted on
+disk], `reverse`, `velrangeenable`, `mute`, `SustainLoop`, `SustainLoopXFadeEQPwr`,
+`LoopDisableOnRelease`). Just set the booleans.
 
 ---
 
@@ -296,16 +298,16 @@ the numpy/pydub/soundfile/tqdm deps. Read `samplemerge.py` before using it.
 Groups are optional for a flat instrument, but anything with **keyswitched
 articulations, round-robin, release triggers, or crossfades** needs them. Build
 `EXSGroup` objects, append to `inst.groups`, and point each zone at one with
-`zone.group = <group index>` (default `-1` = ungrouped). Order in `inst.groups`
+`zone.Group = <group index>` (default `-1` = ungrouped). Order in `inst.groups`
 defines the index.
 
 ```python
 from exsclasses import EXSGroup
-g = EXSGroup(); g.name = "Legato"
+g = EXSGroup(); g.Name = "Legato"
 group_idx = len(inst.groups)
 inst.groups.append(g)
 # ...then for every zone that belongs to this group:
-z.group = group_idx
+z.Group = group_idx
 ```
 
 Useful `EXSGroup` fields (names as in `exsclasses.py`):
@@ -313,13 +315,13 @@ Useful `EXSGroup` fields (names as in `exsclasses.py`):
 | field(s) | meaning |
 |----------|---------|
 | `name`, `volume` (dB), `pan` | label / mix |
-| `polyphony`, `exclusive` | voice limit / exclusive (choke) group |
-| `minvel` / `maxvel`, `startnote` / `endnote` | group velocity / key range (gates its zones) |
+| `Voices`, `ExclusiveClass` | voice limit / exclusive (choke) group |
+| `LowestVelocity` / `HighestVelocity`, `FirstNote` / `LastNote` | group velocity / key range (gates its zones) |
 | **Keyswitch** | `enableby_note=True` + `enablebynotevalue=<ks note>` — group sounds only when that key is the active keyswitch |
 | **Round-robin** | `enableby_roundrobin=True` + `roundrobingrouppos=0,1,2,…` — successive notes cycle the groups sharing it |
-| **Velocity crossfade** | `velocityrangexfade` (+ `velocityrangexfadetype`) |
-| **Key crossfade** | `keyrangexfade` (+ `keyrangexfadetype`) |
-| **Release trigger** | `releasetrigger=True` (+ `releasetriggerdecay`) |
+| **Velocity crossfade** | `VelocityXFade` (+ `VelocityXFadeType`) |
+| **Key crossfade** | `NoteXFade` (+ `NoteXFadeType`) |
+| **Release trigger** | `releasetrigger=True` (+ `ReleaseTriggerDecay`) |
 | **Per-group env offsets** | `env1attackoffset/decayoffset/sustainoffset/releaseoffset/holdoffset` (and `env2*`) |
 
 > **The amplitude envelope (ENV1) is global** — it lives in `inst.params`, not on the
@@ -338,8 +340,8 @@ basic zone path, so **confirm articulation/round-robin behavior in Logic**.
 A default `EXSZone()` is *almost* writable, but two fields are `None` and will raise
 `struct.error: required argument is not an integer` if left unset:
 
-- `sampleend` → set to `sample.length` (or your trim point)
-- `loopend` → set to `sampleend` even when `loopenable=False`
+- `EndFrame` → set to `sample.frameCount` (or your trim point)
+- `SustainLoopEnd` → set to `EndFrame` even when `loopenable=False`
 
 Everything else has a usable default (`startnote=0`, `endnote=127`, `minvel=0`,
 `maxvel=127`, `group=-1`, tunings/offsets `0`, flags `False`, `pitchtracking=True`).
@@ -352,14 +354,14 @@ Everything else has a usable default (`startnote=0`, `endnote=127`, `minvel=0`,
 - [ ] **Copy `default_params`** (`dict(exsparams.default_params)`). `akais9xx.py` and
       `samplepackmenu.py` assign it directly and then mutate it — that edits the
       shared module-global dict and leaks across instruments. Copy instead.
-- [ ] **Set `sampleend` AND `loopend`** to ints on every zone (both default `None`).
+- [ ] **Set `EndFrame` AND `SustainLoopEnd`** to ints on every zone (both default `None`).
 - [ ] **Frames, not bytes** for all start/end/loop values.
-- [ ] **`sampleindex`** on each zone must match its sample's position in
+- [ ] **`FileName`** on each zone must match its sample's position in
       `inst.samples`.
 - [ ] **Velocity layers = extra zones**, not a field on one zone.
 - [ ] **Samples must be resolvable** at load (same folder as the `.exs` is easiest).
 - [ ] **Provide WAV/AIFF/CAF** to `get_sample_info` (decode other formats first).
-- [ ] **Loop boundary may be off-by-one**: EXS likely stores `loopend` as one-past
+- [ ] **Loop boundary may be off-by-one**: EXS likely stores `SustainLoopEnd` as one-past
       the last looped frame (the reference Java reader subtracts 1 on read / adds 1
       on write). If a loop ticks, try `loopend ± 1` and confirm by ear.
 
@@ -375,12 +377,12 @@ back = read_exsfile(output_path)
 assert back is not None
 assert len(back.zones) == len(inst.zones)
 z = back.zones[0]
-assert (z.rootnote, z.startnote, z.endnote) == (inst.zones[0].rootnote,
+assert (z.KeyNote, z.FirstNote, z.LastNote) == (inst.zones[0].rootnote,
                                                 inst.zones[0].startnote,
                                                 inst.zones[0].endnote)
 ```
 
-Then **load it in Logic's Sampler** — that is the real oracle for "does it play and
+Then **load it in Logic's Sampler** — that is the real test for "does it play and
 feel right." Structural correctness (right samples at right keys/velocities, loops,
 gross tuning) is reliable from this library; envelope/filter *feel* is the part to
 verify and iterate on in Logic.
@@ -390,19 +392,52 @@ sanity against the factory corpus), see `tests/backport_check.py`.
 
 ---
 
-## Not covered / known-approximate
+## Resolved & still-approximate (updated 2026-06)
 
-- **Amp envelope A/D/R timing is exact** (`MS_LUT`). Hold/Delay (same scale,
-  unverified), the filter envelope (ENV2), and `VEL_SENS` feel are worth an ear check.
-- **Modulation matrix** — the `MOD1..MOD11_*` params round-trip and export fine. One
-  validated routing (Mod Wheel → Sample Select for mod-wheel dynamics) is in the
-  appendix; other routings are plausible but confirm the source/destination enum
-  codes in Logic.
-- **LFOs, dual filter, the binary-plist layout blocks** — present in the parameter
-  tables but unproven for round-trip; the writer doesn't emit the bplist blocks.
+Most original caveats are now **resolved** — parameter semantics were recovered directly
+from Logic's Sampler behaviour, not guessed. See
+`sampler_param_table.py` and the constants/enums in `exsparams.py`.
+
+- **Envelope A/D/R timing — EXACT.** The engine encodes `ms = 10000 * (byte/127)**4`
+  (`env_value_to_ms` / `env_ms_to_value` now use this); Hold/Delay share the same curve.
+  Env types are in `exsparams.ENV_TYPES` (0=AD … 5=DAHDSR; 2=ADSR is universal in the
+  factory library). The amp envelope is **ENV1**, the filter envelope is **ENV2**; the
+  `0x38`/`0x58` Hold ids (previously swapped) are now fixed.
+- **Modulation matrix — fully decoded & corpus-validated.** Complete destination
+  (`exsparams.MOD_DESTINATIONS` — 2=Sample Select, 6=Pitch, **8=Filter 1 Cutoff**, …)
+  and source (`MOD_SOURCES` — +N = MIDI CC#, −12=LFO1, −3=Velocity, …) enums, with
+  `mod_dest_name()` / `mod_src_name()`. Amount 1000 = 100%; an empty slot's destination ∈
+  {0, −1, −1234567}.
+- **Filter type & LFO waveform — decoded.** `exsparams.FILTER_TYPES` (0=LP 12 dB,
+  1=LP 18, 2=LP 24, 3=LP 6, 4=BP, 5=HP — this **corrects** the order in earlier drafts)
+  and `LFO_WAVEFORMS` (0=Triangle is the default … 7=Sine).
+- **Full parameter set named — complete engine coverage.** A 2026-06 audit extracted
+  Logic Sampler's entire parameter table (367 serializable ids,
+  verified by exact min/max/default match). `sampler_param_table.py` now names **every**
+  one of them (377 entries, id → long/short/group/max/default), and `parameter_order` is
+  a verified **superset** of that universe — so the normalized writer can never silently
+  drop a synth param. None of the 79 newly-added ids appear in the factory corpus (they
+  cover Quick Sampler, Flex, and advanced envelope/LFO features), but Logic *can*
+  serialize them, so they now round-trip. Legacy EXS24 mkI control ids (decoded from
+  the legacy-control conversion) are named `PARAM_LEGACY_*` and preserved.
+- **Rebuild path is now byte-faithful.** `export_zone`/`export_group`/`export_sample`
+  overlay edited fields onto a copy of the source chunk (`_merge_passthrough`), keeping
+  every byte the struct map doesn't model — so an *unedited* parse→export is
+  byte-identical for little-endian chunks, and engine fields that live in struct padding
+  (e.g. a zone's precise sub-dB volume float at chunk 0xd0, a group boolean at body 0x08)
+  survive editing instead of being zeroed. Two of those are now first-class:
+  `zone.VolumePrecise` (float) and `group.unknown_byte_0x08`; the rest are preserved
+  verbatim. Constructed (from-scratch) zones/groups are unaffected.
+- **Binary-plist blocks** (0x0A = NSKeyedArchiver editor/UI layout, 0x0B = per-sample
+  CFURL bookmark) are **round-tripped verbatim** for files that carry them
+  (`instrument.passthrough_blocks`) and not synthesized for fresh exports. Adversarial
+  audit confirmed the 0x0A archive holds **only** UI state (column layouts, panel sizes,
+  slot display order) — no sound parameter exists only there; even its param-named keys
+  (`GroupColumns`/`ZoneColumns`) store column widths, not DSP values.
 - **Big-endian output** — the writer emits little-endian only (Logic reads it). The
-  *reader* handles both byte orders.
-- A handful of legacy embedded-sample EXS variants are unreadable (and unwritten) by
+  *reader* handles both byte orders; a big-endian source is re-emitted little-endian
+  (its raw bytes are not spliced into the overlay).
+- A handful of legacy embedded-sample EXS variants remain unreadable (and unwritten) by
   design; not relevant to export.
 
 ---
@@ -442,32 +477,32 @@ EWI XML attribute names are shown; the conversions generalize.
 
 | source (EWI Region) | EXS zone field | conversion |
 |---------------------|----------------|------------|
-| `KeyLow` / `KeyHigh` | `startnote` / `endnote` | direct (0-127) |
-| `KeyRoot` | `rootnote` | direct |
-| `VelocityLow` / `VelocityHigh` | `minvel` / `maxvel` | direct; set `velrangeenable=True` |
-| `Start` / `End` | `samplestart` / `sampleend` | frames (direct) |
-| `Volume` (0-1) | `volumeadjust` | dB = `20*log10(vol)` |
+| `KeyLow` / `KeyHigh` | `FirstNote` / `LastNote` | direct (0-127) |
+| `KeyRoot` | `KeyNote` | direct |
+| `VelocityLow` / `VelocityHigh` | `LowestVelocity` / `HighestVelocity` | direct; set `velrangeenable=True` |
+| `Start` / `End` | `StartFrame` / `EndFrame` | frames (direct) |
+| `Volume` (0-1) | `Volume` | dB = `20*log10(vol)` |
 | `Pan` (-1..1) | `pan` | `pan*50` |
-| `Tune` (centered 1.0) | `coarsetune` + `finetune` | offset `Tune-1.0` → semitone/cents split |
-| `VelocityFadeLow/High` | group `velocityrangexfade` | EXS velocity xfade is **group-level**, not per-zone |
-| `KeyFadeLow/High` | group `keyrangexfade` | likewise group-level |
+| `Tune` (centered 1.0) | `Tune` + `TuneFine` | offset `Tune-1.0` → semitone/cents split |
+| `VelocityFadeLow/High` | group `VelocityXFade` | EXS velocity xfade is **group-level**, not per-zone |
+| `KeyFadeLow/High` | group `NoteXFade` | likewise group-level |
 | `<Sample Path>` | → `get_sample_info(wav)` | resolve to the decrypted/decoded WAV |
 
 **Playback flags** (booleans; EWI stores these per region or group depending on the
-library): `Reverse` → zone `reverse`, `Tracking` (key tracking) → zone `pitchtracking`
-(1→True), `OnRelease` (release trigger) → group `releasetrigger`.
+library): `Reverse` → zone `reverse`, `Tracking` (key tracking) → zone `Pitched`
+(1→True), `OnRelease` (release trigger) → group `ReleaseTrigger`.
 
 ### Loop (EWI Region/Loop child → EXS zone loop)
 
 | source | EXS | conversion |
 |--------|-----|------------|
-| `LoopStart` | `loopstart` | frames |
-| `LoopLenght`(sic)/`LoopLength`/`LoopEnd` | `loopend` | `loopstart + length` (or `LoopEnd`) |
-| length > 0 | `loopenable` | True for a usable loop |
-| `xFadeTime` | `loopcrossfade` | frames |
-| `Tune` (centered 1.0) | `looptune` | `(Tune-1.0)` → cents |
-| `Mode` 1=until_release / 2=until_end | `loopplaytoendonrelease` / normal | mode 1 ≈ sustain loop; confirm in Logic |
-| `Alter` (alternating) | `loopdirection` | alternating / bidirectional |
+| `LoopStart` | `SustainLoopStart` | frames |
+| `LoopLenght`(sic)/`LoopLength`/`LoopEnd` | `SustainLoopEnd` | `loopstart + length` (or `LoopEnd`) |
+| length > 0 | `SustainLoop` | True for a usable loop |
+| `xFadeTime` | `SustainLoopXFade` | frames |
+| `Tune` (centered 1.0) | `SustainLoopDeTune` | `(Tune-1.0)` → cents |
+| `Mode` 1=until_release / 2=until_end | `LoopDisableOnRelease` / normal | mode 1 ≈ sustain loop; confirm in Logic |
+| `Alter` (alternating) | `SustainLoopMode` | alternating / bidirectional |
 | `Count` | — | EXS loops are continuous; finite repeat counts aren't represented |
 
 ### Envelope (EWI AHDSR modulator → EXS global ENV1) — **exact**
@@ -497,7 +532,7 @@ ENV1 is **global**; for per-group envelopes pick the prevailing one and use the 
   separator (`Type=3`).
 - Keyswitch (from `ArticulationTable` Layer `StartModeContainer` keyswitch modes) →
   group `enableby_note=True` + `enablebynotevalue=<ks note>`.
-- Round-robin → group `enableby_roundrobin=True` + `roundrobingrouppos`.
+- Round-robin → group `enableby_roundrobin=True` + `SelByGroupCycle`.
 - Pitch bend → EWI always emits ±2 semitones → `PARAM_PITCH_BEND_UP=2`,
   `PARAM_PITCH_BEND_DOWN=-2`.
 
@@ -513,7 +548,7 @@ import exsparams
 p = inst.params
 # Mod slot 1: Mod Wheel (CC1) -> Sample Select, 100%
 p[exsparams.PARAM_MOD1_SOURCE]      = 1     # source: CC1 = Mod Wheel (positive source = MIDI CC#)
-p[exsparams.PARAM_MOD1_DESTINATION] = 8     # destination: Sample Select
+p[exsparams.PARAM_MOD1_DESTINATION] = exsparams.MOD_DEST_SAMPLE_SELECT  # = 2 (RE-confirmed; was wrongly 8)
 p[exsparams.PARAM_MOD1_AMOUNT_LOW]  = 1000  # 100% (amount scale: 1000 = 100%)
 p[exsparams.PARAM_MOD1_AMOUNT_HIGH] = 1000
 ```
@@ -523,15 +558,21 @@ Arrange the dynamic layers as adjacent velocity zones (e.g. MP = vel 1-63, MF = 
 [Groups](#groups--articulations-round-robin-velocitykey-crossfade) section):
 
 ```python
-g.velocityrangexfade     = 40    # XFade width (0 = hard switch)
-g.velocityrangexfadetype = 1     # XFade type (0 = off; nonzero enables)
+g.VelocityXFade     = 40    # XFade width (0 = hard switch)
+g.VelocityXFadeType = 1     # XFade type (0 = off; nonzero enables)
 ```
 
-**Evidence:** of factory instruments that route something to Sample Select (`dest=8`),
-**91% also set group velocity XFade** — i.e. this is the standard factory construction
-for crossfade instruments. Enum codes: every positive Mod-Matrix source observed is a
-valid MIDI CC# (≤127), so `source=1` = CC1/Mod Wheel; `dest=8` = Sample Select; amount
-`1000` = 100%. Confirm against a Logic-made reference if you want certainty.
+**Evidence (corrected 2026-06):** the Sample-Select destination
+code is **`2`**, not `8` — confirmed against Logic and corpus-validated. The slot is
+located by `destination == 2`; the value is stored literally on disk (no transform).
+Enum codes: a positive Mod-Matrix source is a MIDI CC#
+(`source=1` = Mod Wheel); `dest=2` = Sample Select; `dest=6` = Pitch; `source=-12` = LFO1;
+`source=-1` = none; amount `1000` = 100%; an unassigned slot's destination is `0` or
+`-1234567`. The **full** destination and source enums (corpus-validated) live in
+`exsparams.MOD_DESTINATIONS`
+/ `MOD_SOURCES`, with helpers `mod_dest_name()` / `mod_src_name()`. Notably `dest=8` =
+**Filter 1 Cutoff** (the single most common factory routing), `dest=2` = Sample Select,
+`dest=6` = Pitch; sources `−12`=LFO 1, `−3`=Velocity, `−13`/`−14`=Env 1/2, positive = MIDI CC#.
 
 ### Not representable in EXS24 (document / drop)
 
