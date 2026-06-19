@@ -15,18 +15,33 @@ Python code for reading, writing, and exporting Logic Pro **Sampler / EXS24** (`
 
 ## Set polyphony (max voices)
 
-Polyphony is parameter id 5, a plain voice count. The Sampler UI only lets you *pick* values up to its
-dropdown maximum, but a larger stored value is played back as-is — this is how Logic's Studio Piano
-instruments ship at 256 voices. `set_polyphony.py` writes the value with a 2-byte overlay, leaving the
-rest of the file byte-identical:
+Polyphony is parameter id 5, a plain per-instrument voice count. The Sampler UI only lets you *pick*
+values up to its dropdown maximum (≈99), but a larger stored value is accepted as-is — this is how
+Logic's Studio Piano instruments ship at 256. `set_polyphony.py` writes the value with a 2-byte
+overlay, leaving the rest of the file byte-identical:
 
 ```bash
 python3 set_polyphony.py "Grand Piano.exs" 256
 # -> writes "Grand Piano (256 voices).exs" next to the source
 ```
 
-The field is a 16-bit integer (max 32767); 256 matches Logic's own Studio Piano. Very high counts are
-still bounded by available CPU.
+The field is a 16-bit integer (max 32767); 256 matches Logic's own Studio Piano.
+
+### Two separate limits
+
+The instrument's polyphony value is only a *per-instrument* voice budget. Sampler also has an internal
+voice pool that is the real ceiling on simultaneous voices, and by default it tracks the same ≈99–100.
+So **raising an instrument's polyphony alone is not enough** — past ≈100 voices you also have to enlarge
+the pool, which Logic governs with a hidden preference, `EXSVoiceLimit`:
+
+```bash
+# quit Logic first; the value is read once when the first Sampler loads in a session
+defaults write com.apple.logic10 EXSVoiceLimit -int 999
+```
+
+`EXSVoiceLimit` ranges 16–999 (values outside that are clamped; absent ≈ 99). With it raised, a
+patched high-polyphony instrument can play well past 100 voices; without it, you stay near ≈100
+regardless of the value you patch in. Either way the practical limit is your CPU.
 
 ## Consolidate to a single .caf
 

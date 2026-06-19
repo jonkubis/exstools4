@@ -17,7 +17,13 @@ Usage:
 
 If no -o is given, writes "<name> (<N> voices).exs" next to the source.
 The field is an int16, so values up to 32767 are accepted. 256 matches Logic's
-own Studio Piano; very high values are still bounded by available CPU.
+own Studio Piano.
+
+Note: this value is only the per-instrument voice budget. Sampler also has an
+internal voice pool that caps simultaneous voices at ~99-100 by default, so to
+actually play more than ~100 voices you must also raise Logic's hidden
+'EXSVoiceLimit' preference (quit Logic, then e.g.
+`defaults write com.apple.logic10 EXSVoiceLimit -int 999`). See the README.
 """
 import argparse
 import os
