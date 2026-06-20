@@ -28,7 +28,21 @@ class EXSInstrument():
     param_data: str = None
     passthrough_blocks: list = field(default_factory=lambda: [])  # raw bytes of aux blocks (0x0A archive etc.) to round-trip
     is_modern: bool = False                                       # 0x40 type-byte flag (modern Sampler editor save)
+    has_editor_archive: bool = False                              # a real type-0x0A editor-state archive block is present (independent of is_modern/0x40)
     original_chunk: bytes = None                                  # full original instrument chunk bytes, for byte-faithful round-trip
+
+    # Typed, enumerable access to the auxiliary blocks kept in passthrough_blocks. These
+    # are round-tripped byte-identically; the engine reads type-7 chunks as key-switch /
+    # per-key "key action" records and type-8 chunks as output-bus labels. Their internal
+    # field layout isn't exposed here (it varies and isn't reliably documented), so these
+    # return the raw block bytes so callers can find/count/inspect them by type.
+    @property
+    def keyaction_blocks(self):
+        return [b for b in self.passthrough_blocks if len(b) > 3 and (b[3] & 0x3F) == 0x07]
+
+    @property
+    def buslabel_blocks(self):
+        return [b for b in self.passthrough_blocks if len(b) > 3 and (b[3] & 0x3F) == 0x08]
 
 
 def parse_instrument(data):
@@ -89,6 +103,14 @@ class EXSZone():
     # writes it alongside the coarse integer `Volume` (within 1.0 of it). None = leave
     # the source bytes untouched on export (so set it too if you change `Volume`).
     VolumePrecise:       float = None
+    # Flex pitch offset (signed byte at zone body 0x32), applied by the engine when Flex
+    # is enabled; populated in ~181k factory zones. Read/edit + round-trips byte-exact.
+    FlexPitchOffset:     int = 0
+    # options bit 6 (0x40): route this zone to its own direct Output bus (the Output field).
+    ExsOutputFlag:       bool = False
+    # flexoptions bit 0 = Flex enabled; bit 1 (engine-INVERTED) = follow project tempo.
+    FlexEnabled:         bool = False
+    FlexFollowTempo:     bool = True
 
 
 def parse_zone(data,id=None,endian='<'):
@@ -178,6 +200,14 @@ def parse_zone(data,id=None,endian='<'):
     zone.SustainLoopXFadeEQPwr = {0:False, 2:True}[zone.loopoptions & 2]  # 0 = OFF, 2  = ON
     zone.LoopDisableOnRelease = {0:True, 4:False}[zone.loopoptions & 4]  # loopoptions bit2 set (play-to-end) -> NOT disabled
 
+    # options bit 6 = direct-output routing; flexoptions bits 0/1 = Flex on / follow-tempo (inverted).
+    zone.ExsOutputFlag   = bool(zone.options & 64)
+    zone.FlexEnabled     = bool(zone.flexoptions & 1)
+    zone.FlexFollowTempo = not (zone.flexoptions & 2)
+    # Flex pitch offset: signed byte at zone body 0x32 (legacy 126), inside the struct map's pad.
+    if len(zone.data) >= 127:
+        zone.FlexPitchOffset = struct.unpack_from(endian + 'b', data, 126)[0]
+
     # for field in fields(group):
     #     field_name = field.name
     #     field_value = getattr(group, field_name)
@@ -236,7 +266,7 @@ def export_zone(zone):
         zone.Name.encode('latin-1'),
         bool_to_byte([
             {0: False, 128: True}[zone.options & 128],  # pass through the high bits of the existing options
-            {0: False, 64:  True}[zone.options & 64],
+            zone.ExsOutputFlag,                          # bit 6 (0x40) = direct-output routing
             {0: False, 32:  True}[zone.options & 32],
             zone.mute,
             zone.velrangeenable,
@@ -270,7 +300,8 @@ def export_zone(zone):
             zone.SustainLoop
         ]),
         zone.SustainLoopMode,
-        zone.flexoptions, # need to unpack/repack this
+        # flexoptions: bits 0/1 from FlexEnabled/FlexFollowTempo (inverted), other bits passed through
+        (zone.flexoptions & ~0x03) | (1 if zone.FlexEnabled else 0) | (0 if zone.FlexFollowTempo else 2),
         zone.FlexSpeed,
         zone.TuneTail,
         zone.Tune,
@@ -297,6 +328,10 @@ def export_zone(zone):
     # (legacy 200) when set; None leaves whatever the overlay preserved.
     if zone.VolumePrecise is not None and len(out) >= 204:
         struct.pack_into('<f', out, 200, zone.VolumePrecise)
+    # Flex pitch offset (signed byte at legacy 126) — written so it survives a
+    # rebuild/scratch build; equals the source byte for an unedited parsed zone.
+    if zone.FlexPitchOffset is not None and len(out) >= 127:
+        struct.pack_into('<b', out, 126, zone.FlexPitchOffset)
     return bytes(out)
 
 
@@ -312,6 +347,10 @@ class EXSGroup():
     mute:                   bool = False
     ReleaseTriggerDecay:    bool = False
     fixedsampleselect:      bool = False #https://www.logicprohelp.com/forums/topic/99786-whats-the-fss-on-exs24-edit-solved/
+    # Engine flags packed in the same `options` byte (confirmed bit positions):
+    IgnorePitchWheelAndBend: bool = False  # options bit 1 (0x02)
+    DecayIsDbLinear:         bool = False  # options bit 2 (0x04)
+    RoundRobinPerNoteOn:     bool = False  # options bit 5 (0x20)
     ExclusiveClass:              int = 0
     LowestVelocity:                 int = 0
     HighestVelocity:                 int = 127
@@ -355,6 +394,15 @@ class EXSGroup():
     # meaning is undetermined. None = leave source bytes untouched on export (the
     # overlay preserves it); set 0/255 to override.
     unknown_byte_0x08:      int = None
+    # The engine evaluates up to THREE stacked "enable by" conditions; `enablebytype`
+    # above is slot 1 (body 84). Slots 2 & 3 live at body 92/93 and use the same
+    # selector map (1=Note,2=Group,3=Ctrl,4=Pitch,5=Channel,6=Artic,7=Tempo).
+    enablebytype2:          int = 0
+    enablebytype3:          int = 0
+    # Group body 36/37 (signed bytes): "Live" pre-anchor time (ms) and dynamic-range
+    # low-level offset (engine scales x0.5). Both round-trip byte-exact.
+    LivePreAnchorTimeMs:    int = 0
+    DynaRangeLowLevelOffset: int = 0
 
     SelByNote:          bool = False  # 1
     SelByGroup:    bool = False  # 2
@@ -408,7 +456,9 @@ def parse_group(data,id=None,endian='<'):
     # Boolean at body 0x08 (legacy 84), inside the struct map's 8x pad; expose it.
     if len(group.data) >= 85:
         group.unknown_byte_0x08 = struct.unpack_from(endian + 'B', data, 84)[0]
-    group.ReleaseTriggerDecayTime     = values[10]   # Release Trigger: Time
+    # Release Trigger: Time -- a 32-bit engine field (legacy 92); the struct map reads
+    # only its low 16 bits, so read the full width directly (upper bytes are 0 in practice).
+    group.ReleaseTriggerDecayTime     = struct.unpack_from(endian + 'I', data, 92)[0]
     group.VelocityXFade     = values[11]-128     # Velocity Range: XFade
     group.VelocityXFadeType = values[12]  # Velocity Range: XFade Type
     group.NoteXFadeType      = values[13]  # Key Range: XFade Type
@@ -451,6 +501,9 @@ def parse_group(data,id=None,endian='<'):
     group.mute                = {0: False, 16:  True}[group.options & 16]  # 0 = OFF, 1  = ON
     group.ReleaseTriggerDecay = {0: False, 64:  True}[group.options & 64]  # 0 = OFF, 1  = ON
     group.fixedsampleselect   = {0: False, 128: True}[group.options & 128]  # 0 = OFF, 1  = ON -- Vel Range XfadeType OFF == 1/ON
+    group.IgnorePitchWheelAndBend = bool(group.options & 2)   # bit 1
+    group.DecayIsDbLinear         = bool(group.options & 4)   # bit 2
+    group.RoundRobinPerNoteOn     = bool(group.options & 32)  # bit 5
 
     #group enable by
     group.SelByNote         = group.enablebytype == 1
@@ -460,6 +513,15 @@ def parse_group(data,id=None,endian='<'):
     group.SelByChannel      = group.enablebytype == 5
     group.SelByArtic = group.enablebytype == 6
     group.SelByTempo        = group.enablebytype == 7
+
+    # "Live" pre-anchor time + dynamic-range offset (body 36/37 = legacy 112/113).
+    if len(group.data) >= 114:
+        group.LivePreAnchorTimeMs     = struct.unpack_from(endian + 'b', data, 112)[0]
+        group.DynaRangeLowLevelOffset = struct.unpack_from(endian + 'b', data, 113)[0]
+    # Stacked enable-by slots 2 & 3 (body 92/93 = legacy 168/169), present in longer groups.
+    if len(group.data) >= 170:
+        group.enablebytype2 = struct.unpack_from(endian + 'b', data, 168)[0]
+        group.enablebytype3 = struct.unpack_from(endian + 'b', data, 169)[0]
 
     #print (group)
 
@@ -480,20 +542,20 @@ def export_group(group):
         group.Pan,
         group.Voices,
         bool_to_byte([
-            group.fixedsampleselect,
-            group.ReleaseTriggerDecay,
-            {0: False, 32:  True}[group.options & 32], # pass through the other bits of the existing options
-            group.mute,
-            {0: False, 8:   True}[group.options & 8],
-            {0: False, 4:   True}[group.options & 4],
-            {0: False, 2:   True}[group.options & 2],
-            {0: False, 1:   True}[group.options & 1]
+            group.fixedsampleselect,                    # bit 7
+            group.ReleaseTriggerDecay,                  # bit 6
+            group.RoundRobinPerNoteOn,                  # bit 5
+            group.mute,                                 # bit 4
+            {0: False, 8:   True}[group.options & 8],   # bit 3 (pass through)
+            group.DecayIsDbLinear,                      # bit 2
+            group.IgnorePitchWheelAndBend,              # bit 1
+            {0: False, 1:   True}[group.options & 1]    # bit 0 (pass through)
         ]),
         group.ExclusiveClass,
         group.LowestVelocity,
         group.HighestVelocity,
         group.SampleSelectRandOffset,
-        group.ReleaseTriggerDecayTime,
+        group.ReleaseTriggerDecayTime & 0xFFFF,   # low 16 bits here; full 32-bit written via pack_into below
         group.VelocityXFade+128,
         group.VelocityXFadeType,
         group.NoteXFadeType,
@@ -537,6 +599,17 @@ def export_group(group):
     # Promoted out-of-struct field: the body-0x08 boolean (legacy 84) when set.
     if group.unknown_byte_0x08 is not None and len(out) >= 85:
         struct.pack_into('<B', out, 84, group.unknown_byte_0x08)
+    # Promoted pad fields: Live pre-anchor / dyna-range offset (legacy 112/113) and
+    # enable-by slots 2/3 (legacy 168/169). Equal the source bytes for unedited parses.
+    if len(out) >= 114:
+        struct.pack_into('<b', out, 112, group.LivePreAnchorTimeMs)
+        struct.pack_into('<b', out, 113, group.DynaRangeLowLevelOffset)
+    if len(out) >= 170:
+        struct.pack_into('<b', out, 168, group.enablebytype2)
+        struct.pack_into('<b', out, 169, group.enablebytype3)
+    # Release-trigger decay time is 32-bit (legacy 92); write the full width.
+    if len(out) >= 96:
+        struct.pack_into('<I', out, 92, group.ReleaseTriggerDecayTime & 0xFFFFFFFF)
     return bytes(out)
 
 
@@ -569,6 +642,9 @@ class EXSSample():
     # israwaudio: bool = False  # SFZ import uses this
     # embeddedsample: bool = False
     exsfile_pos: int = None  # used for in-place sample relinking
+    # Windows volume / drive-reference id (sample body 72) — passed by the engine to
+    # its Windows->POSIX path resolver; often the 0xffffff9c (-100) sentinel. 0 = none.
+    WindowsVolumeId: int = 0
     merge_pitch_adjust: float = 0.0
     merge_monolith_index: int = 0
     merge_monolith_sample_start: int = 0
@@ -585,6 +661,7 @@ def parse_sample(data,id=None,endian='<'):
     sample_formats = (
         (412, "<8x4s64sIIIIII4x4sII40x256s"),
         (668, "<8x4s64sIIIIII4x4sII40x256s256s"),
+        (676, "<8x4s64sIIIIII4x4sII40x256s256s8x"),  # explicit long variant (8 trailing bytes)
     )
     struct_format = None
     for min_len, fmt in sample_formats:
@@ -615,6 +692,9 @@ def parse_sample(data,id=None,endian='<'):
     sample.fileSize         = values[9]   # size (in bytes) of the actual sample file, probably used for relinking
     sample.isCompressed     = values[10]==1
     sample.folder           = values[11]
+    # Windows volume/drive id at sample body 72 (legacy 148), inside the struct map's pad.
+    if len(sample.data) >= 152:
+        sample.WindowsVolumeId = struct.unpack_from(endian + 'i', data, 148)[0]
     if len(sample.data) >= 668:
         values[12] = values[12].split(b'\x00', maxsplit=1)[0].decode('latin-1')
         sample.filename         = values[12]
@@ -658,7 +738,11 @@ def export_sample(sample):
     # (e.g. 'lpcm'/'mcpl'). Mark them pad for the overlay so a parsed sample keeps
     # its original bytes there; constructed samples (no .data) still get the synth.
     overlay_fmt = struct_format.replace('4sI32x', '4x4x32x')
-    return _merge_passthrough(sample.data, b, overlay_fmt)
+    out = bytearray(_merge_passthrough(sample.data, b, overlay_fmt))
+    # Windows volume/drive id (legacy 148) — equals the source bytes for an unedited parse.
+    if len(out) >= 152:
+        struct.pack_into('<i', out, 148, sample.WindowsVolumeId)
+    return bytes(out)
 
 
 def parse_params(data,endian='<'):
@@ -739,6 +823,20 @@ def export_params(params):
             old_school_param_keys.append(k)
             old_school_param_values.append(v)
         else: # new school parameters (keys > 255 and overflow when old-school parameters are greater than 100 in count)
+            new_school_param_keys.append(k)
+            new_school_param_values.append(v)
+
+    # Preserve ANY parameter the reader captured that isn't in parameter_order (e.g. the
+    # legacy EXS24 mkI control ids the engine still honours on load, or newer ids);
+    # otherwise a rebuild-from-fields would silently drop them.
+    _emitted = set(old_school_param_keys) | set(new_school_param_keys)
+    for k, v in params.items():
+        if k == 0 or v == 0 or k in exsparams.parameter_order or k in _emitted:
+            continue
+        if k < 255 and len(old_school_param_keys) < 100:
+            old_school_param_keys.append(k)
+            old_school_param_values.append(v)
+        elif len(new_school_param_keys) < 200:
             new_school_param_keys.append(k)
             new_school_param_values.append(v)
 

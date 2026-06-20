@@ -114,9 +114,10 @@ class EXSBlock:
                 f"at offset {offset}")
 
         # The high bits of the type byte are flags (0x40 and 0x80 occur in the
-        # wild); the real type is the low nibble.
+        # wild); the real type is the low 6 bits, matching the engine's loader
+        # (which masks the type with & 0x3F, not just the low nibble).
         raw_type_byte = data[offset + 3]
-        block_type = raw_type_byte & 0x0F
+        block_type = raw_type_byte & 0x3F
 
         endian = ">" if is_big_endian else "<"
         size, index = struct.unpack_from(endian + "II", data, offset + 4)

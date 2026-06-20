@@ -88,6 +88,10 @@ def read_exsfile(pathname):
                 # type-0x0A NSKeyedArchiver editor-state archive that modern Sampler
                 # saves carry). We don't interpret them, but we keep their raw bytes
                 # so write_exsfile can round-trip them verbatim.
+                if block.type == exsblock.TYPE_BPLIST_SAMPLER_LAYOUT:
+                    # A genuine editor-state archive -- track its real presence, which is
+                    # independent of the header's 0x40 flag (the two often disagree).
+                    instrument.has_editor_archive = True
                 instrument.passthrough_blocks.append(block.raw)
             else:
                 print ("UNKNOWN EXS BLOCK TYPE!", hex(block.type), repr(block.name))
